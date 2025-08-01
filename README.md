@@ -14,8 +14,11 @@ npx mongeese diff       # Detects schema changes
 npx mongeese generate   # Generates a migration file
 npx mongeese apply      # Runs the migration
 ```
+
 ---
+
 ## 🧠 Why Use Mongeese?
+
 ✅ Eliminate manual migration scripts
 
 🛡 Prevent silent schema drift in production
@@ -27,7 +30,9 @@ npx mongeese apply      # Runs the migration
 🧩 CI/CD and GitOps friendly
 
 ---
+
 ## 📦 Features
+
 - 📸 Snapshot Mongoose schemas on every change
 
 - 🧬 Detect added/removed/modified fields
@@ -37,9 +42,11 @@ npx mongeese apply      # Runs the migration
 - 🗂 Organize migrations by timestamp
 
 - 🔌 NestJS-friendly architecture
+
 ---
 
 ## 🛠 Requirements
+
 Node.js >= 18
 
 Mongoose >= 7
@@ -47,6 +54,7 @@ Mongoose >= 7
 Works great with NestJS, but framework-agnostic
 
 ## 🤝 Contributing
+
 We welcome issues, feedback, and PRs.
 
-See CONTRIBUTING.md for how to get started.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to get started.
