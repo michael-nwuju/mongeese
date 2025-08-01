@@ -1,0 +1,61 @@
+{
+  "name": "mongeese",
+  "version": "1.0.0",
+  "description": "Auto-generate MongoDB migration scripts by detecting changes in your Mongoose schemas.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/bin/mongeese.ts",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michael-nwuju/mongeese.git"
+  },
+  "keywords": [
+    "mongodb",
+    "mongoose",
+    "migration",
+    "schema",
+    "database",
+    "cli",
+    "typescript",
+    "nestjs"
+  ],
+  "author": "Michael Nwuju",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/michael-nwuju/mongeese/issues"
+  },
+  "homepage": "https://github.com/michael-nwuju/mongeese#readme",
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0",
+    "fs-extra": "^11.3.0",
+    "lodash": "^4.17.21",
+    "mongoose": "^8.16.1",
+    "p-limit": "^6.2.0"
+  },
+  "bin": {
+    "mongeese": "dist/bin/mongeese.js"
+  },
+  "devDependencies": {
+    "@types/commander": "^2.12.5",
+    "@types/fs-extra": "^11.0.4",
+    "@types/lodash": "^4.17.20",
+    "@types/mongoose": "^5.11.97",
+    "@types/node": "^24.0.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ]
+}
