@@ -1,19 +1,20 @@
 import { Db, Collection } from "mongodb";
-import { MongeeseMigration, MongeeseConfig } from "../interfaces/snapshot";
+import { Snapshot, Migration } from "../types";
+import { generateSnapshot, verifySnapshot } from "./snapshot";
 
 export class MigrationStore {
   private db: Db;
 
-  private migrationsCollection: Collection<MongeeseMigration>;
+  private snapshots: Collection<Snapshot>;
 
-  private configCollection: Collection<MongeeseConfig>;
+  private migrations: Collection<Migration>;
 
   constructor(db: Db) {
     this.db = db;
 
-    this.configCollection = db.collection("mongeese-config");
+    this.snapshots = db.collection("mongeese.snapshots");
 
-    this.migrationsCollection = db.collection("mongeese-migrations");
+    this.migrations = db.collection("mongeese.migrations");
   }
 
   /**
@@ -21,13 +22,30 @@ export class MigrationStore {
    */
   async isInitialized(): Promise<boolean> {
     try {
-      // Check if the config collection exists and has the initialization flag
-      const initConfig = await this.configCollection.findOne({
-        key: "initialized",
-      });
-      return !!initConfig;
+      // Check if the required collections exist
+      const collections = await this.db.listCollections().toArray();
+
+      const collectionNames = collections.map(c => c.name);
+
+      const hasSnapshotsCollection =
+        collectionNames.includes("mongeese.snapshots");
+
+      const hasMigrationsCollection = collectionNames.includes(
+        "mongeese.migrations"
+      );
+
+      if (!hasSnapshotsCollection || !hasMigrationsCollection) {
+        return false;
+      }
+
+      // Check if the snapshots collection has the required indexes
+      const snapshotsIndexes = await this.snapshots.listIndexes().toArray();
+
+      const hasHashIndex = snapshotsIndexes.some(idx => idx.name === "hash_1");
+
+      return hasHashIndex;
     } catch {
-      // If collection doesn't exist or any error, consider not initialized
+      // If any error occurs, consider not initialized
       return false;
     }
   }
@@ -41,62 +59,103 @@ export class MigrationStore {
       return;
     }
 
+    // Create indexes for snapshots collection
+    await this.snapshots.createIndex({ hash: 1 }, { unique: true });
+    await this.snapshots.createIndex({ version: -1 });
+    await this.snapshots.createIndex({ createdAt: -1 });
+
     // Create indexes for migrations collection
-    await this.migrationsCollection.createIndex({ timestamp: -1 });
+    await this.migrations.createIndex({ id: 1 }, { unique: true });
 
-    await this.migrationsCollection.createIndex(
-      { version: 1 },
-      { unique: true }
-    );
+    await this.migrations.createIndex({ "from.hash": 1 });
 
-    await this.migrationsCollection.createIndex({ applied: 1 });
+    await this.migrations.createIndex({ "to.hash": 1 });
 
-    // Create indexes for config collection
-    await this.configCollection.createIndex({ key: 1 }, { unique: true });
+    await this.migrations.createIndex({ createdAt: -1 });
+  }
 
-    // Mark as initialized
-    await this.setConfig("initialized", true);
+  // ===== SNAPSHOT METHODS =====
+
+  /**
+   * Generate and store a new snapshot
+   */
+  async generateAndStoreSnapshot(version?: number): Promise<Snapshot> {
+    return await this.storeSnapshot(await generateSnapshot(this.db, version));
   }
 
   /**
-   * Get configuration value
+   * Store a snapshot in the format
    */
-  async getConfig(key: string): Promise<any> {
-    const config = await this.configCollection.findOne({ key });
-    return config?.value;
+  async storeSnapshot(snapshot: Snapshot): Promise<Snapshot> {
+    // Verify the snapshot hash before storing
+    if (!verifySnapshot(snapshot)) {
+      throw new Error("Snapshot hash verification failed");
+    }
+
+    // Check if snapshot with this hash already exists
+    const existing = await this.snapshots.findOne({ hash: snapshot.hash });
+
+    if (existing) {
+      return existing;
+    }
+
+    const result = await this.snapshots.insertOne(snapshot);
+
+    snapshot._id = result.insertedId;
+
+    return snapshot;
   }
 
   /**
-   * Set configuration value
+   * Get a snapshot by hash
    */
-  async setConfig(key: string, value: any): Promise<void> {
-    await this.configCollection.updateOne(
-      { key },
-      {
-        $set: {
-          value,
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
+  async getSnapshotByHash(hash: string): Promise<Snapshot | null> {
+    return await this.snapshots.findOne({ hash });
   }
 
   /**
-   * Generate a unique version string based on timestamp
+   * Get a snapshot by ID
    */
-  private generateVersion(): string {
-    const now = new Date();
-    const timestamp = now.getTime();
-    const random = Math.floor(Math.random() * 1000);
-    return `${timestamp}-${random}`;
+  async getSnapshotById(id: string): Promise<Snapshot | null> {
+    const { ObjectId } = await import("mongodb");
+    return await this.snapshots.findOne({ _id: new ObjectId(id) });
   }
 
   /**
-   * Check if this is the first time running mongeese
+   * Get the latest snapshot
    */
-  async isFirstRun(): Promise<boolean> {
-    const count = await this.migrationsCollection.countDocuments();
-    return count === 0;
+  async getLatestSnapshot(): Promise<Snapshot | null> {
+    return await this.snapshots.find({}).sort({ version: -1 }).limit(1).next();
+  }
+
+  /**
+   * Get all snapshots
+   */
+  async getAllSnapshots(): Promise<Snapshot[]> {
+    return await this.snapshots.find({}).sort({ version: -1 }).toArray();
+  }
+
+  /**
+   * Verify all stored snapshots
+   */
+  async verifyAllSnapshots(): Promise<{
+    valid: Snapshot[];
+    invalid: Snapshot[];
+  }> {
+    const snapshots = await this.getAllSnapshots();
+
+    const valid: Snapshot[] = [];
+
+    const invalid: Snapshot[] = [];
+
+    for (const snapshot of snapshots) {
+      if (verifySnapshot(snapshot)) {
+        valid.push(snapshot);
+      } else {
+        invalid.push(snapshot);
+      }
+    }
+
+    return { valid, invalid };
   }
 }

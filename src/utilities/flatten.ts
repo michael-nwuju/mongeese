@@ -1,4 +1,4 @@
-import { FieldMap } from "../interfaces/snapshot";
+import { FieldMap } from "../types";
 
 export function flatten(
   obj: any,
