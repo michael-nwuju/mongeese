@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // Test the new enterprise-grade diff engine
-const { diffSnapshots, normalizeSnapshot } = require("./dist/core/diff");
+const { writeFileSync } = require("fs");
+const { diffSnapshots } = require("./dist/core/diff");
 
 console.log("🚀 Testing Enterprise-Grade Diff Engine\n");
 
@@ -171,6 +172,8 @@ console.log("");
 // Run the diff
 console.log("🔍 Running diff analysis...");
 const result = diffSnapshots(fromSnapshot, toSnapshot);
+
+writeFileSync("diff-result.json", JSON.stringify({ result }));
 
 console.log("✅ Diff Results:");
 console.log("");

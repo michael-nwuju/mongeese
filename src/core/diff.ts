@@ -393,7 +393,7 @@ function diffFields(
       let toField = toFields[pathParts[0]];
 
       // Handle nested fields
-      for (let i = 1; i < pathParts.length || (fromField && toField); i++) {
+      for (let i = 1; i < pathParts.length; i++) {
         if (fromField?.nestedFields?.[pathParts[i]]) {
           fromField = fromField?.nestedFields?.[pathParts[i]];
         }
