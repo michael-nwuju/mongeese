@@ -7,18 +7,37 @@ export interface FieldDefinition {
   required: boolean; // true if field is present in all documents
   default?: any; // default value if all values are the same
   enum?: string[]; // enum values for string fields
+  nestedFields?: { [name: string]: FieldDefinition }; // for nested object fields
 }
 
-// Collection structure with fields and indexes
+// Enhanced index definition with all MongoDB options
+export interface IndexDefinition {
+  fields: Array<{ field: string; direction: 1 | -1 }>;
+  unique?: boolean;
+  sparse?: boolean;
+  partialFilterExpression?: any;
+  expireAfterSeconds?: number;
+  collation?: any;
+  text?: boolean;
+  geoHaystack?: boolean;
+  bucketSize?: number;
+  min?: number;
+  max?: number;
+  bits?: number;
+  name?: string;
+}
+
+// Enhanced collection structure with validators
 export interface CollectionStructure {
   fields: {
     [fieldName: string]: FieldDefinition;
   };
-  indexes?: {
-    fields: string[];
-    unique?: boolean;
-    sparse?: boolean;
-  }[];
+  indexes?: IndexDefinition[];
+  validator?: {
+    $jsonSchema: any;
+  };
+  validationLevel?: "off" | "strict" | "moderate";
+  validationAction?: "error" | "warn";
 }
 
 export type SnapshotCollections = {
@@ -54,3 +73,55 @@ export interface Migration {
 export type SnapshotError = { collection: string; error: any };
 
 export type FieldMap = { [path: string]: string };
+
+// Migration command types
+export interface MigrationCommand {
+  metadata?: any;
+  command: string;
+  description: string;
+  safetyLevel: "safe" | "warning" | "dangerous";
+}
+
+export interface DiffResult {
+  up: MigrationCommand[];
+  down: MigrationCommand[];
+  warnings: string[];
+  metadata: {
+    collections: {
+      added: string[];
+      removed: string[];
+      modified: string[];
+    };
+    fields: {
+      added: string[];
+      removed: string[];
+      modified: string[];
+      renamed: Array<{ from: string; to: string }>;
+    };
+    indexes: {
+      added: string[];
+      removed: string[];
+      modified: string[];
+    };
+    validators: {
+      added: string[];
+      removed: string[];
+      modified: string[];
+    };
+  };
+}
+
+// Enhanced collection structure with validators
+export interface EnhancedCollectionStructure extends CollectionStructure {
+  validator?: {
+    $jsonSchema: any;
+  };
+  validationLevel?: "off" | "strict" | "moderate";
+  validationAction?: "error" | "warn";
+}
+
+// Normalized snapshot for consistent hashing
+export interface NormalizedSnapshot {
+  version: number;
+  collections: { [name: string]: EnhancedCollectionStructure };
+}

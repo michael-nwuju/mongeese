@@ -1,6 +1,7 @@
 import { Db, Collection } from "mongodb";
 import { Snapshot, Migration } from "../types";
 import { generateSnapshot, verifySnapshot } from "./snapshot";
+import { diffSnapshots } from "./diff";
 
 export class MigrationStore {
   private db: Db;
@@ -157,5 +158,52 @@ export class MigrationStore {
     }
 
     return { valid, invalid };
+  }
+
+  // ===== MIGRATION METHODS =====
+
+  /**
+   * Create a migration between two snapshots
+   */
+  async createMigration(
+    from: Snapshot,
+    to: Snapshot,
+    migrationId: string
+  ): Promise<Migration> {
+    const { up, down } = diffSnapshots(from, to);
+
+    const migration: Migration = {
+      id: migrationId,
+      from: {
+        _id: from._id!,
+        hash: from.hash,
+      },
+      to: {
+        _id: to._id!,
+        hash: to.hash,
+      },
+      up: up.map(cmd => cmd.command),
+      down: down.map(cmd => cmd.command),
+      createdAt: new Date(),
+    };
+
+    const result = await this.migrations.insertOne(migration);
+    migration._id = result.insertedId;
+
+    return migration;
+  }
+
+  /**
+   * Get a migration by ID
+   */
+  async getMigrationById(id: string): Promise<Migration | null> {
+    return await this.migrations.findOne({ id });
+  }
+
+  /**
+   * Get all migrations
+   */
+  async getAllMigrations(): Promise<Migration[]> {
+    return await this.migrations.find({}).sort({ createdAt: -1 }).toArray();
   }
 }

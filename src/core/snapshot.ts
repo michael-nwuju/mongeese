@@ -160,7 +160,10 @@ async function snapCollection(
     const indexes = dbIndexes
       .filter(index => index.name !== "_id_") // Skip _id index
       .map(index => ({
-        fields: Object.keys(index.key),
+        fields: Object.entries(index.key).map(([field, direction]) => ({
+          field,
+          direction: direction as 1 | -1,
+        })),
         unique: index.unique || false,
         sparse: index.sparse || false,
       }));
