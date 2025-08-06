@@ -214,7 +214,7 @@ function serializeSnapshot(snapshot: Snapshot): string {
 }
 
 // Generate SHA256 hash of snapshot content
-function generateSnapshotHash(snapshot: Snapshot): string {
+export function generateSnapshotHash(snapshot: Snapshot): string {
   const serialized = serializeSnapshot(snapshot);
 
   return createHash("sha256").update(serialized).digest("hex");

@@ -2,6 +2,8 @@
 
 import { Command } from "commander";
 import init from "../commands/init";
+import generate from "../commands/generate";
+import migrate from "../commands/migrate";
 
 const program = new Command();
 
@@ -20,31 +22,39 @@ program
   });
 
 program
-  .command("snapshot")
-  .description("Create a new schema snapshot")
-  .action(async () => {
-    console.log("Snapshot command not yet implemented.");
-  });
-
-program
-  .command("diff")
-  .description("Detect schema changes")
-  .action(async () => {
-    console.log("Diff command not yet implemented.");
-  });
-
-program
   .command("generate")
   .description("Generate a migration file")
-  .action(() => {
-    console.log("Generate command not yet implemented.");
+  .option("-n, --name <name>", "Name for the migration file")
+  .action(async cmdObj => {
+    await generate({ name: cmdObj.name });
   });
 
 program
-  .command("apply")
-  .description("Apply migrations to the database")
-  .action(() => {
-    console.log("Apply command not yet implemented.");
+  .command("migrate [direction]")
+  .description("Apply, rollback, or show status of migrations")
+  .option("-t, --target <target>", "Target migration filename or timestamp")
+  .option("--dry", "Dry run (no changes will be made)")
+  .option("-f, --force", "Force apply/rollback migrations")
+  .action(async (direction = "status", cmdObj) => {
+    await migrate(direction, {
+      target: cmdObj.target,
+      dry: !!cmdObj.dry,
+      force: !!cmdObj.force,
+    });
   });
+
+// program
+//   .command("snapshot")
+//   .description("Create a new schema snapshot")
+//   .action(async () => {
+//     console.log("Snapshot command not yet implemented.");
+//   });
+
+// program
+//   .command("diff")
+//   .description("Detect schema changes")
+//   .action(async () => {
+//     console.log("Diff command not yet implemented.");
+//   });
 
 program.parse(process.argv);

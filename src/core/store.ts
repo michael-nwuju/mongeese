@@ -1,4 +1,4 @@
-import { Db, Collection } from "mongodb";
+import { Db, Collection, Filter, WithId } from "mongodb";
 import { Snapshot, Migration } from "../types";
 import { generateSnapshot, verifySnapshot } from "./snapshot";
 import { diffSnapshots } from "./diff";
@@ -173,7 +173,7 @@ export class MigrationStore {
     const { up, down } = diffSnapshots(from, to);
 
     const migration: Migration = {
-      id: migrationId,
+      name: migrationId,
       from: {
         _id: from._id!,
         hash: from.hash,
@@ -205,5 +205,45 @@ export class MigrationStore {
    */
   async getAllMigrations(): Promise<Migration[]> {
     return await this.migrations.find({}).sort({ createdAt: -1 }).toArray();
+  }
+
+  /**
+   * Find migration
+   */
+  async findMigration(
+    filter: Filter<Migration>
+  ): Promise<WithId<Migration> | null> {
+    return await this.migrations.findOne(filter);
+  }
+
+  /**
+   * Get all applied migrations (isApplied: true)
+   */
+  async getAppliedMigrations(): Promise<Migration[]> {
+    return await this.migrations
+      .find({ isApplied: true })
+      .sort({ appliedAt: 1 })
+      .toArray();
+  }
+
+  /**
+   * Mark a migration as applied or not applied
+   */
+  async setMigrationApplied(
+    filename: string,
+    isApplied: boolean,
+    executionTime: number
+  ): Promise<void> {
+    await this.migrations.updateOne(
+      { filename },
+      {
+        $set: {
+          isApplied,
+          appliedAt: isApplied ? new Date() : null,
+          executionTime,
+        },
+      },
+      { upsert: true }
+    );
   }
 }
