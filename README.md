@@ -1,8 +1,8 @@
-# 🧬 Mongeese
+# 🧬 Mongeese CLI
 
 > Auto-generate MongoDB migration scripts by detecting changes in your Mongoose schemas.
 
-**Mongeese** is a CLI tool that tracks your Mongoose models, detects schema changes, and generates versioned MongoDB migration files — just like TypeORM or Prisma, but built for MongoDB’s schemaless world.
+**Mongeese CLI** is a CLI tool that tracks your Mongoose models, detects schema changes, and generates versioned MongoDB migration files — just like TypeORM or Prisma, but built for MongoDB’s schemaless world.
 
 ---
 
@@ -11,19 +11,19 @@
 Install globally with npm:
 
 ```bash
-npm install -g mongeese
+npm install -g mongeese-cli
 ```
 
 Or with yarn:
 
 ```bash
-yarn global add mongeese
+yarn global add mongeese-cli
 ```
 
 Or use npx (no install required):
 
 ```bash
-npx mongeese <command>
+npx mongeese-cli <command>
 ```
 
 ---
@@ -31,10 +31,10 @@ npx mongeese <command>
 ## ⚡ Quick Start
 
 ```bash
-npx mongeese init       # Sets up migration tracking
-npx mongeese diff       # Detects schema changes
-npx mongeese generate   # Generates a migration file
-npx mongeese apply      # Runs the migration
+npx mongeese-cli init       # Sets up migration tracking
+npx mongeese-cli diff       # Detects schema changes
+npx mongeese-cli generate   # Generates a migration file
+npx mongeese-cli apply      # Runs the migration
 ```
 
 ---
@@ -44,16 +44,16 @@ npx mongeese apply      # Runs the migration
 After installation, use the CLI:
 
 ```bash
-mongeese init
-mongeese generate --name add_users_collection
-mongeese migrate up
-mongeese migrate down --target 20240501_120000_add_users_collection
-mongeese migrate status
+mongeese-cli init
+mongeese-cli generate --name add_users_collection
+mongeese-cli migrate up
+mongeese-cli migrate down --target 20240501_120000_add_users_collection
+mongeese-cli migrate status
 ```
 
 ---
 
-## 🧠 Why Use Mongeese?
+## 🧠 Why Use Mongeese CLI?
 
 ✅ Eliminate manual migration scripts
 
