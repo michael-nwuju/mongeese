@@ -6,6 +6,28 @@
 
 ---
 
+## 📦 Installation
+
+Install globally with npm:
+
+```bash
+npm install -g mongeese
+```
+
+Or with yarn:
+
+```bash
+yarn global add mongeese
+```
+
+Or use npx (no install required):
+
+```bash
+npx mongeese <command>
+```
+
+---
+
 ## ⚡ Quick Start
 
 ```bash
@@ -13,6 +35,20 @@ npx mongeese init       # Sets up migration tracking
 npx mongeese diff       # Detects schema changes
 npx mongeese generate   # Generates a migration file
 npx mongeese apply      # Runs the migration
+```
+
+---
+
+## 🛠 Usage
+
+After installation, use the CLI:
+
+```bash
+mongeese init
+mongeese generate --name add_users_collection
+mongeese migrate up
+mongeese migrate down --target 20240501_120000_add_users_collection
+mongeese migrate status
 ```
 
 ---
@@ -40,8 +76,6 @@ npx mongeese apply      # Runs the migration
 - 🛠 Generate $set, $unset, and rollback scripts
 
 - 🗂 Organize migrations by timestamp
-
-- 🔌 NestJS-friendly architecture
 
 ---
 
