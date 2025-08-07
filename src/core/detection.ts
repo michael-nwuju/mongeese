@@ -80,7 +80,22 @@ export async function loadModelFiles(
       loaded.push(filePath);
     } catch (error) {
       errors.push({ file: filePath, error });
-      console.warn(`[Mongeese] Failed to load model file ${filePath}:`, error);
+      if (
+        error &&
+        (error as any)?.code === "MODULE_NOT_FOUND" &&
+        (error as any)?.message
+      ) {
+        console.warn(
+          `[Mongeese] Failed to load model file ${filePath}: MODULE_NOT_FOUND (${
+            (error as any)?.message
+          })`
+        );
+      } else {
+        console.warn(
+          `[Mongeese] Failed to load model file ${filePath}:`,
+          error
+        );
+      }
     }
   }
 
@@ -213,10 +228,6 @@ export function generateSnapshotFromModels(
 ): Snapshot {
   const detectedModels = models || detectRegisteredModels();
 
-  console.log({ detectedModels });
-
-  fs.writeFileSync("models.json", JSON.stringify({ detectedModels }));
-
   if (detectedModels.length === 0) {
     console.warn("[Mongeese] No Mongoose models found in current process");
   }
@@ -226,6 +237,14 @@ export function generateSnapshotFromModels(
   for (const model of detectedModels) {
     const schema = model.schema;
     const collectionName = model.collection.collectionName;
+
+    // Exclude Mongeese's own collections
+    if (
+      collectionName === "mongeese.snapshots" ||
+      collectionName === "mongeese.migrations"
+    ) {
+      continue;
+    }
 
     console.log(
       `[Mongeese] Processing model: ${model.modelName} -> ${collectionName}`

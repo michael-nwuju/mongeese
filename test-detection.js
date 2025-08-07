@@ -18,7 +18,6 @@ async function testDetectRegisteredModels() {
   const schema = new mongoose.Schema({ name: String });
   mongoose.model("TestModel", schema);
   const models = detection.detectRegisteredModels();
-  console.log({ models });
   assert(models.some(m => m.modelName === "TestModel"));
   console.log("✔ detectRegisteredModels simulation passed");
 }

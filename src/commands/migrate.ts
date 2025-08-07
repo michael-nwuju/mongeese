@@ -34,6 +34,7 @@ export default async function migrate(
         await showMigrationStatus(db);
         break;
     }
+    process.exit(0);
   } catch (error) {
     console.error(chalk.red("❌ Migration error:"), error);
     process.exit(1);

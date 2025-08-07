@@ -89,6 +89,7 @@ export default async function init(): Promise<void> {
     console.log(
       chalk.cyan("2. Run 'mongeese generate' to create your first snapshot")
     );
+    process.exit(0);
   } catch (error) {
     console.error(chalk.red("❌ Error during initialization:"), error);
     process.exit(1);
