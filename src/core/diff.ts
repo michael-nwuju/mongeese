@@ -673,6 +673,54 @@ function diffValidators(
 }
 
 /**
+ * Inject session into MongoDB command for transaction support
+ */
+function injectSessionIntoCommand(command: string): string {
+  // Skip comments
+  if (command.trim().startsWith("//")) {
+    return command;
+  }
+
+  // Handle db.collection(...).method(...) pattern
+  if (command.includes("db.collection(")) {
+    // Find the last closing parenthesis and inject session before it
+    const lastParenIndex = command.lastIndexOf(")");
+    if (lastParenIndex > -1) {
+      // Check if there are already options
+      const beforeLastParen = command.substring(0, lastParenIndex);
+      const afterLastParen = command.substring(lastParenIndex);
+
+      // Look for existing options object
+      const optionsStart = beforeLastParen.lastIndexOf("{");
+      const commaBeforeOptions = beforeLastParen.lastIndexOf(",");
+
+      if (optionsStart > commaBeforeOptions) {
+        // There's already an options object, add session to it
+        return beforeLastParen + ", session" + afterLastParen;
+      } else {
+        // No options object, create one with session
+        return beforeLastParen + ", { session }" + afterLastParen;
+      }
+    }
+  }
+
+  // Handle db.runCommand(...) pattern
+  if (command.includes("db.runCommand(")) {
+    const lastParenIndex = command.lastIndexOf(")");
+    if (lastParenIndex > -1) {
+      return (
+        command.substring(0, lastParenIndex) +
+        ", { session }" +
+        command.substring(lastParenIndex)
+      );
+    }
+  }
+
+  // Return unchanged for other commands
+  return command;
+}
+
+/**
  * Main diff function that orchestrates all diffing operations
  */
 export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
@@ -771,7 +819,7 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
   if (allUp.length > 1) {
     const transactionUp = [
       {
-        command: "const session = db.getMongo().startSession();",
+        command: "const session = db.client.startSession();",
         description: "Start transaction session",
         safetyLevel: "safe" as const,
       },
@@ -780,7 +828,10 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
         description: "Begin transaction",
         safetyLevel: "safe" as const,
       },
-      ...allUp,
+      ...allUp.map(cmd => ({
+        ...cmd,
+        command: injectSessionIntoCommand(cmd.command),
+      })),
       {
         command: "await session.commitTransaction();",
         description: "Commit transaction",
@@ -795,7 +846,7 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
 
     const transactionDown = [
       {
-        command: "const session = db.getMongo().startSession();",
+        command: "const session = db.client.startSession();",
         description: "Start transaction session",
         safetyLevel: "safe" as const,
       },
@@ -804,7 +855,10 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
         description: "Begin transaction",
         safetyLevel: "safe" as const,
       },
-      ...allDown,
+      ...allDown.map(cmd => ({
+        ...cmd,
+        command: injectSessionIntoCommand(cmd.command),
+      })),
       {
         command: "await session.commitTransaction();",
         description: "Commit transaction",

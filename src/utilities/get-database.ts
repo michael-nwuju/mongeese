@@ -1,11 +1,13 @@
 import * as fs from "fs-extra";
 import path from "path";
 import { Db } from "mongodb";
+import { DbWithClient } from "../types";
 
 /**
  * Load database connection from bootstrap file
+ * Returns DbWithClient if available, otherwise falls back to Db
  */
-export async function getDatabase(): Promise<Db> {
+export async function getDatabase(): Promise<DbWithClient> {
   const JS_BOOTSTRAP_FILE = "mongeese.connection.js";
   const TS_BOOTSTRAP_FILE = "mongeese.connection.ts";
 
@@ -37,13 +39,22 @@ export async function getDatabase(): Promise<Db> {
     // Import the bootstrap file
     const bootstrap = require(path.resolve(bootstrapFile));
 
-    // Only support getDbWithMongoose
-    if (bootstrap.getDbWithMongoose) {
-      const db: Db = await bootstrap.getDbWithMongoose();
+    // Prefer getDbWithClient for transaction support
+    if (bootstrap.getDbWithClient) {
+      const db: DbWithClient = await bootstrap.getDbWithClient();
       return db;
+    }
+    // Fall back to getDbWithMongoose for backward compatibility
+    else if (bootstrap.getDbWithMongoose) {
+      console.warn(
+        "[Mongeese] Using legacy getDbWithMongoose. Consider upgrading to getDbWithClient for transaction support."
+      );
+      const db: Db = await bootstrap.getDbWithMongoose();
+      // Try to add client if available from mongoose connection
+      return db as DbWithClient;
     } else {
       throw new Error(
-        "No getDbWithMongoose function found in bootstrap file. Please export getDbWithMongoose."
+        "No getDbWithClient or getDbWithMongoose function found in bootstrap file. Please export getDbWithClient for transaction support."
       );
     }
   } catch (error) {

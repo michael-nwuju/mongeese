@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { Db } from "mongodb";
+import { DbWithClient } from "../types";
 import {
   getMigrationFiles,
   loadMigrationFile,
@@ -39,7 +40,7 @@ export async function recordMigrationApplied(
  * Execute a single migration
  */
 export async function executeMigration(
-  db: Db,
+  db: DbWithClient,
   migration: MigrationFile,
   direction: "up" | "down",
   options: MigrateOptions
@@ -95,6 +96,7 @@ export async function executeMigration(
     );
   } catch (error) {
     const executionTime = Date.now() - startTime;
+
     console.error(
       chalk.red(`   ❌ Migration failed after ${executionTime}ms:`),
       error
@@ -107,7 +109,7 @@ export async function executeMigration(
  * Apply pending migrations (up)
  */
 export async function applyMigrations(
-  db: Db,
+  db: DbWithClient,
   options: MigrateOptions
 ): Promise<void> {
   const appliedMigrations = await getAppliedMigrations(db);
@@ -203,7 +205,7 @@ export async function applyMigrations(
  * Rollback migrations (down)
  */
 export async function rollbackMigrations(
-  db: Db,
+  db: DbWithClient,
   options: MigrateOptions
 ): Promise<void> {
   const appliedMigrations = await getAppliedMigrations(db);
@@ -294,7 +296,7 @@ export async function rollbackMigrations(
 /**
  * Show migration status
  */
-export async function showMigrationStatus(db: Db): Promise<void> {
+export async function showMigrationStatus(db: DbWithClient): Promise<void> {
   const appliedMigrations = await getAppliedMigrations(db);
 
   const allMigrations = await getMigrationFiles();

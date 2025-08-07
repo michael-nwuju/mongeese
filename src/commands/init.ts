@@ -13,13 +13,31 @@ const BOOTSTRAP_TEMPLATE_TS = `// mongeese.connection.ts
 import mongoose from "mongoose";
 import { MongoClient, Db } from "mongodb";
 
-/**
- * Returns a connected MongoDB Db instance for Mongeese to use.
- * Choose one of the two methods below based on your project setup.
- */
+// DbWithClient type that extends Db with an attached client property
+export interface DbWithClient extends Db {
+  client: MongoClient;
+}
 
-// Option 1: If you're using Mongoose in your project
+/**
+ * Factory function that returns a DbWithClient object with the client attached.
+ * This allows Mongeese to use transactions for migration operations.
+ */
+export async function getDbWithClient(uri?: string, dbName?: string): Promise<DbWithClient> {
+  const mongoUri = uri || process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
+  const client = new MongoClient(mongoUri);
+  
+  await client.connect();
+  const db = client.db(dbName);
+  
+  // Attach the client to the db instance
+  (db as DbWithClient).client = client;
+  
+  return db as DbWithClient;
+}
+
+// Legacy function for backward compatibility - use getDbWithClient instead
 export async function getDbWithMongoose(): Promise<Db> {
+  console.warn("[Mongeese] getDbWithMongoose is deprecated. Please use getDbWithClient for transaction support.");
   const mongooseConnection = await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
   
   if (!mongooseConnection) {
@@ -27,13 +45,6 @@ export async function getDbWithMongoose(): Promise<Db> {
   }
   
   return mongooseConnection.connection.db;
-}
-
-// Option 2: If you're using native MongoDB driver
-export async function getDbWithNative(): Promise<Db> {
-  const client = new MongoClient(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
-  await client.connect();
-  return client.db();
 }
 `;
 
@@ -43,13 +54,26 @@ const mongoose = require("mongoose");
 const { MongoClient } = require("mongodb");
 
 /**
- * Returns a connected MongoDB Db instance for Mongeese to use.
- * Choose one of the two methods below based on your project setup.
+ * Factory function that returns a DbWithClient object with the client attached.
+ * This allows Mongeese to use transactions for migration operations.
  */
+async function getDbWithClient(uri, dbName) {
+  const mongoUri = uri || process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
+  const client = new MongoClient(mongoUri);
+  
+  await client.connect();
+  const db = client.db(dbName);
+  
+  // Attach the client to the db instance
+  db.client = client;
+  
+  return db;
+}
 
-// Option 1: If you're using Mongoose in your project
+// Legacy function for backward compatibility - use getDbWithClient instead
 async function getDbWithMongoose() {
-    const mongooseConnection = await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
+  console.warn("[Mongeese] getDbWithMongoose is deprecated. Please use getDbWithClient for transaction support.");
+  const mongooseConnection = await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
   
   if (!mongooseConnection) {
     throw new Error("Failed to connect to MongoDB");
@@ -58,12 +82,7 @@ async function getDbWithMongoose() {
   return mongooseConnection.connection.db;
 }
 
-// Option 2: If you're using native MongoDB driver
-async function getDbWithNative() {
-  const client = new MongoClient(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
-  await client.connect();
-  return client.db();
-}
+module.exports = { getDbWithClient, getDbWithMongoose };
 `;
 
 const BOOTSTRAP_TEMPLATE =
