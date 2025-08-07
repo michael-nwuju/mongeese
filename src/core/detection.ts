@@ -1,5 +1,4 @@
 import mongoose, { Schema, SchemaType, Model } from "mongoose";
-import * as fs from "fs";
 import * as path from "path";
 import { glob } from "glob";
 import {
@@ -70,7 +69,18 @@ export async function loadModelFiles(
     return { loaded, errors };
   }
 
-  for (const filePath of filePaths) {
+  console.log(
+    `[Mongeese] Attempting to load ${filePaths.length} model files...`
+  );
+
+  for (let i = 0; i < filePaths.length; i++) {
+    const filePath = filePaths[i];
+
+    // Add progress logging for large numbers of files
+    if (filePaths.length > 10 && i % 10 === 0) {
+      console.log(`[Mongeese] Loading model files... ${i}/${filePaths.length}`);
+    }
+
     try {
       // Clear require cache to ensure fresh load
       delete require.cache[path.resolve(filePath)];
@@ -80,25 +90,12 @@ export async function loadModelFiles(
       loaded.push(filePath);
     } catch (error) {
       errors.push({ file: filePath, error });
-      if (
-        error &&
-        (error as any)?.code === "MODULE_NOT_FOUND" &&
-        (error as any)?.message
-      ) {
-        console.warn(
-          `[Mongeese] Failed to load model file ${filePath}: MODULE_NOT_FOUND (${
-            (error as any)?.message
-          })`
-        );
-      } else {
-        console.warn(
-          `[Mongeese] Failed to load model file ${filePath}:`,
-          error
-        );
-      }
     }
   }
 
+  console.log(
+    `[Mongeese] Completed loading: ${loaded.length} successful, ${errors.length} failed`
+  );
   return { loaded, errors };
 }
 
@@ -239,12 +236,12 @@ export function generateSnapshotFromModels(
     const collectionName = model.collection.collectionName;
 
     // Exclude Mongeese's own collections
-    if (
-      collectionName === "mongeese.snapshots" ||
-      collectionName === "mongeese.migrations"
-    ) {
-      continue;
-    }
+    // if (
+    //   collectionName === "mongeese.snapshots" ||
+    //   collectionName === "mongeese.migrations"
+    // ) {
+    //   continue;
+    // }
 
     console.log(
       `[Mongeese] Processing model: ${model.modelName} -> ${collectionName}`
@@ -284,10 +281,7 @@ export function generateSnapshotFromModels(
     // Extract indexes
     const indexes = extractIndexes(schema);
 
-    collections[collectionName] = {
-      fields,
-      indexes,
-    };
+    collections[collectionName] = { fields, indexes };
   }
 
   const snapshot: Snapshot = {
@@ -319,40 +313,53 @@ export async function generateSnapshotFromCodebase(
 }> {
   console.log("[Mongeese] Auto-discovering Mongoose models...");
 
-  // Discover model files
-  const discoveredFiles = await discoverModelFiles(config);
-  console.log(
-    `[Mongeese] Discovered ${discoveredFiles.length} potential model files`
-  );
+  try {
+    // Discover model files
+    const discoveredFiles = await discoverModelFiles(config);
 
-  // Load model files
-  const { loaded: loadedFiles, errors: loadErrors } = await loadModelFiles(
-    discoveredFiles,
-    config
-  );
-  console.log(
-    `[Mongeese] Successfully loaded ${loadedFiles.length} model files`
-  );
+    console.log(
+      `[Mongeese] Discovered ${discoveredFiles.length} potential model files`
+    );
 
-  if (loadErrors.length > 0) {
-    console.warn(`[Mongeese] Failed to load ${loadErrors.length} model files`);
-  }
-
-  // Generate snapshot from loaded models
-  const detectedModels = detectRegisteredModels();
-  const snapshot = generateSnapshotFromModels(detectedModels, config);
-
-  return {
-    snapshot,
-    metadata: {
+    // Load model files
+    const { loaded: loadedFiles, errors: loadErrors } = await loadModelFiles(
       discoveredFiles,
-      loadedFiles,
-      loadErrors,
-      detectedModels: detectedModels.map(
-        m => `${m.modelName} -> ${m.collection.collectionName}`
-      ),
-    },
-  };
+      config
+    );
+
+    console.log(
+      `[Mongeese] Successfully loaded ${loadedFiles.length} model files`
+    );
+
+    if (loadErrors.length > 0) {
+      console.warn(
+        `[Mongeese] Failed to load ${loadErrors.length} model files`
+      );
+    }
+
+    // Generate snapshot from loaded models
+    const detectedModels = detectRegisteredModels();
+    console.log(
+      `[Mongeese] Detected ${detectedModels.length} registered models`
+    );
+
+    const snapshot = generateSnapshotFromModels(detectedModels, config);
+
+    return {
+      snapshot,
+      metadata: {
+        discoveredFiles,
+        loadedFiles,
+        loadErrors,
+        detectedModels: detectedModels.map(
+          m => `${m.modelName} -> ${m.collection.collectionName}`
+        ),
+      },
+    };
+  } catch (error) {
+    console.error("[Mongeese] Error during snapshot generation:", error);
+    throw error;
+  }
 }
 
 /**
