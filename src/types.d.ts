@@ -1,4 +1,9 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, Db, MongoClient } from "mongodb";
+
+// DbWithClient type that extends Db with an attached client property
+export interface DbWithClient extends Db {
+  client: MongoClient;
+}
 
 // Field definition with type information
 export interface FieldDefinition {
