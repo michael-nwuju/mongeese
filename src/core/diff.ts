@@ -235,7 +235,7 @@ function diffCollections(
       });
 
       down.push({
-        command: `db.${collectionName}.drop()`,
+        command: `db.collection("${collectionName}").drop()`,
         description: `Drop collection '${collectionName}'`,
         safetyLevel: "dangerous",
         metadata: { collectionName },
@@ -249,7 +249,7 @@ function diffCollections(
   for (const collectionName of fromNames) {
     if (!toNames.includes(collectionName)) {
       up.push({
-        command: `db.${collectionName}.drop()`,
+        command: `db.collection("${collectionName}").drop()`,
         description: `Drop collection '${collectionName}'`,
         safetyLevel: "dangerous",
         metadata: { collectionName },
@@ -319,14 +319,14 @@ function diffFields(
           : "null";
 
       up.push({
-        command: `db.${collectionName}.updateMany({}, { $set: { "${fieldPath}": ${defaultValue} } })`,
+        command: `db.collection("${collectionName}").updateMany({}, { $set: { "${fieldPath}": ${defaultValue} } })`,
         description: `Add field '${fieldPath}' to collection '${collectionName}'`,
         safetyLevel: "safe",
         metadata: { fieldPath, fieldDefinition: fieldDef as FieldDefinition },
       });
 
       down.push({
-        command: `db.${collectionName}.updateMany({}, { $unset: { "${fieldPath}": "" } })`,
+        command: `db.collection("${collectionName}").updateMany({}, { $unset: { "${fieldPath}": "" } })`,
         description: `Remove field '${fieldPath}' from collection '${collectionName}'`,
         safetyLevel: "warning",
         metadata: { fieldPath },
@@ -340,14 +340,14 @@ function diffFields(
       const fieldDef = fromFields[fieldPath];
 
       up.push({
-        command: `db.${collectionName}.updateMany({}, { $unset: { "${fieldPath}": "" } })`,
+        command: `db.collection("${collectionName}").updateMany({}, { $unset: { "${fieldPath}": "" } })`,
         description: `Remove field '${fieldPath}' from collection '${collectionName}'`,
         safetyLevel: "warning",
         metadata: { fieldPath },
       });
 
       down.push({
-        command: `db.${collectionName}.updateMany({}, { $set: { "${fieldPath}": ${JSON.stringify(
+        command: `db.collection("${collectionName}").updateMany({}, { $set: { "${fieldPath}": ${JSON.stringify(
           fieldDef.default || null
         )} } })`,
         description: `Restore field '${fieldPath}' to collection '${collectionName}'`,
@@ -364,7 +364,7 @@ function diffFields(
   // Renamed fields
   for (const rename of renames) {
     up.push({
-      command: `db.${collectionName}.updateMany({}, { $rename: { "${rename.from}": "${rename.to}" } })`,
+      command: `db.collection("${collectionName}").updateMany({}, { $rename: { "${rename.from}": "${rename.to}" } })`,
       description: `Rename field '${rename.from}' to '${rename.to}' in collection '${collectionName}'`,
       safetyLevel: "safe",
       metadata: {
@@ -375,7 +375,7 @@ function diffFields(
     });
 
     down.push({
-      command: `db.${collectionName}.updateMany({}, { $rename: { "${rename.to}": "${rename.from}" } })`,
+      command: `db.collection("${collectionName}").updateMany({}, { $rename: { "${rename.to}": "${rename.from}" } })`,
       description: `Rename field '${rename.to}' back to '${rename.from}' in collection '${collectionName}'`,
       safetyLevel: "safe",
       metadata: { from: rename.to, to: rename.from },
@@ -533,7 +533,7 @@ function generateIndexCommand(
 
   const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
-  return `db.${collectionName}.createIndex({ ${fields} }${optionsStr})`;
+  return `db.collection("${collectionName}").createIndex({ ${fields} }${optionsStr})`;
 }
 
 /**
@@ -568,7 +568,7 @@ function diffIndexes(
         toIndex.name || toIndex.fields.map(f => f.field).join("_");
 
       down.push({
-        command: `db.${collectionName}.dropIndex("${indexName}")`,
+        command: `db.collection("${collectionName}").dropIndex("${indexName}")`,
         description: `Drop index from collection '${collectionName}'`,
         safetyLevel: "warning",
         metadata: { indexName, index: toIndex },
@@ -587,7 +587,7 @@ function diffIndexes(
         fromIndex.name || fromIndex.fields.map(f => f.field).join("_");
 
       up.push({
-        command: `db.${collectionName}.dropIndex("${indexName}")`,
+        command: `db.collection("${collectionName}").dropIndex("${indexName}")`,
         description: `Drop index from collection '${collectionName}'`,
         safetyLevel: "warning",
         metadata: { indexName, index: fromIndex },

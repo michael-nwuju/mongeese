@@ -30,7 +30,11 @@ export default async function generate(
 
     const { snapshot: currentSnapshot } = await generateSnapshotFromCodebase();
 
+    await store.storeSnapshot(currentSnapshot);
+
     const latestSnapshot = await generateSnapshot(db, 1);
+
+    await store.storeSnapshot(latestSnapshot);
 
     const diffResult = diffSnapshots(latestSnapshot, currentSnapshot);
 
@@ -126,6 +130,7 @@ export default async function generate(
         )
       );
     }
+    process.exit(0);
   } catch (error) {
     console.error(chalk.red("❌ Error generating migration:"), error);
     process.exit(1);

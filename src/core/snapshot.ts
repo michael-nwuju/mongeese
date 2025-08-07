@@ -232,6 +232,13 @@ export async function generateSnapshot(
 ): Promise<Snapshot> {
   const dbCollections = await db.collections();
 
+  // Exclude Mongeese's own collections
+  const filteredCollections = dbCollections.filter(
+    c =>
+      c.collectionName !== "mongeese.snapshots" &&
+      c.collectionName !== "mongeese.migrations"
+  );
+
   const collections: {
     [collectionName: string]: CollectionStructure;
   } = {};
@@ -239,9 +246,9 @@ export async function generateSnapshot(
   const errors: SnapshotError[] = [];
 
   // Use concurrency limit for up to 50 collections, otherwise fall back to sequential
-  if (dbCollections.length > 50) {
+  if (filteredCollections.length > 50) {
     // Too many collections, process sequentially to avoid DB overload
-    for (const collection of dbCollections) {
+    for (const collection of filteredCollections) {
       await snapCollection(collections, collection, errors);
     }
   } else {
@@ -249,7 +256,7 @@ export async function generateSnapshot(
     const limit = pLimit(5);
 
     await Promise.all(
-      dbCollections.map(collection =>
+      filteredCollections.map(collection =>
         limit(async () => {
           await snapCollection(collections, collection, errors);
         })
