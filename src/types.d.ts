@@ -178,11 +178,50 @@ export interface MongooseFieldInfo extends FieldDefinition {
   transform?: boolean;
   virtual?: boolean;
 }
-
-// Configuration for model detection
 export interface ModelDetectionConfig {
-  modelPaths?: string[]; // Glob patterns for model files
-  require?: boolean; // Whether to require the files (default: true)
-  followImports?: boolean; // Whether to follow import statements (default: false)
-  includeVirtuals?: boolean; // Whether to include virtual fields (default: false)
+  modelPaths?: string[];
+  require?: boolean;
+  includeVirtuals?: boolean;
+
+  // NestJS-specific options
+  nestjs?: {
+    // Whether to attempt bootstrapping the NestJS app (most reliable)
+    bootstrap?: boolean;
+
+    // Whether to always discover schema files even after successful bootstrap
+    alwaysDiscoverFiles?: boolean;
+
+    // Custom app module path (if not standard)
+    appModulePath?: string;
+
+    // Whether to include entity files (some projects use entities instead of schemas)
+    includeEntities?: boolean;
+
+    // Custom schema file patterns for NestJS projects
+    schemaPatterns?: string[];
+  };
+}
+
+// You might also want to add a configuration file interface
+export interface MongeesConfig {
+  // Database connection
+  database?: {
+    uri?: string;
+    options?: any;
+  };
+
+  // Model detection settings
+  detection?: ModelDetectionConfig;
+
+  // Migration settings
+  migrations?: {
+    directory?: string;
+    tableName?: string;
+  };
+
+  // NestJS-specific settings
+  nestjs?: {
+    configModule?: string;
+    bootstrap?: boolean;
+  };
 }

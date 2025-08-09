@@ -31,6 +31,8 @@
   },
   "homepage": "https://github.com/michael-nwuju/mongeese#readme",
   "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/mongoose": "^11.0.3",
     "chalk": "^5.4.1",
     "commander": "^14.0.0",
     "fs-extra": "^11.3.0",

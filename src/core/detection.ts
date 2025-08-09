@@ -10,6 +10,69 @@ import {
   MongooseFieldInfo,
 } from "../types";
 import { generateSnapshotHash } from "./snapshot";
+import { generateNestJSSnapshot } from "./nestjs-detection";
+
+/**
+ * Detects if the current project is a NestJS project
+ * Checks multiple indicators to be thorough
+ */
+function isNestJSProject(): boolean {
+  try {
+    // Method 1: Check package.json for NestJS dependencies
+    const packageJsonPath = path.join(process.cwd(), "package.json");
+    const packageJson = require(packageJsonPath);
+    const allDependencies = {
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    };
+
+    const hasNestCore = !!allDependencies["@nestjs/core"];
+    const hasNestMongoose = !!allDependencies["@nestjs/mongoose"];
+
+    if (hasNestCore && hasNestMongoose) {
+      return true;
+    }
+
+    // Method 2: Check for NestJS-specific files
+    const nestjsFiles = [
+      "src/app.module.ts",
+      "src/main.ts",
+      "apps/*/src/app.module.ts", // Monorepo structure
+    ];
+
+    for (const filePath of nestjsFiles) {
+      try {
+        const fullPath = path.join(process.cwd(), filePath);
+        if (require("fs").existsSync(fullPath)) {
+          // Check file content for NestJS imports
+          const content = require("fs").readFileSync(fullPath, "utf8");
+          if (content.includes("@nestjs/") || content.includes("NestFactory")) {
+            return true;
+          }
+        }
+      } catch (error) {
+        // Ignore file read errors, continue checking
+      }
+    }
+
+    // Method 3: Check for nest-cli.json
+    try {
+      const nestCliPath = path.join(process.cwd(), "nest-cli.json");
+      if (require("fs").existsSync(nestCliPath)) {
+        return true;
+      }
+    } catch (error) {
+      // Ignore
+    }
+
+    return false;
+  } catch (error: any) {
+    if (error.message) {
+      console.warn("[Mongeese] Could not detect project type:", error.message);
+    }
+    return false;
+  }
+}
 
 /**
  * Detects Mongoose models in the current Node.js process
@@ -20,27 +83,64 @@ export function detectRegisteredModels(): Model<any>[] {
 
 /**
  * Attempts to discover model files using glob patterns
+ * Automatically uses NestJS patterns if NestJS project is detected
  */
 export async function discoverModelFiles(
   config: ModelDetectionConfig = {}
 ): Promise<string[]> {
-  const defaultPaths = [
-    "**/models/**/*.{js,ts}",
-    "**/model/**/*.{js,ts}",
-    "**/schemas/**/*.{js,ts}",
-    "**/schema/**/*.{js,ts}",
-    "**/*model*.{js,ts}",
-    "**/*schema*.{js,ts}",
-  ];
+  const isNestJS = isNestJSProject();
+
+  // Automatically use NestJS-specific patterns if detected
+  const defaultPaths = isNestJS
+    ? [
+        // Primary NestJS patterns
+        "**/*.schema.{js,ts}",
+        "**/schemas/**/*.{js,ts}",
+
+        // Alternative NestJS patterns
+        "**/entities/**/*.{js,ts}", // Some use entities folder
+        "**/dto/**/*.{js,ts}", // Sometimes DTOs contain schemas
+
+        // Module-specific patterns
+        "**/modules/**/schemas/**/*.{js,ts}",
+        "**/modules/**/*.schema.{js,ts}",
+        "**/src/**/schemas/**/*.{js,ts}",
+        "**/src/**/*.schema.{js,ts}",
+
+        // Monorepo patterns
+        "**/apps/**/schemas/**/*.{js,ts}",
+        "**/libs/**/schemas/**/*.{js,ts}",
+        "**/packages/**/schemas/**/*.{js,ts}",
+      ]
+    : [
+        // Standard Mongoose patterns
+        "**/models/**/*.{js,ts}",
+        "**/model/**/*.{js,ts}",
+        "**/schemas/**/*.{js,ts}",
+        "**/schema/**/*.{js,ts}",
+        "**/*model*.{js,ts}",
+        "**/*schema*.{js,ts}",
+      ];
 
   const patterns = config.modelPaths || defaultPaths;
+
+  if (isNestJS) {
+    console.log("[Mongeese] 🔍 Using NestJS-optimized file discovery patterns");
+  }
 
   const allFiles: string[] = [];
 
   for (const pattern of patterns) {
     try {
       const files = await glob(pattern, {
-        ignore: ["**/node_modules/**", "**/dist/**", "**/build/**"],
+        ignore: [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/*.spec.ts",
+          "**/*.test.ts",
+          "**/*.d.ts",
+        ],
         absolute: true,
       });
       allFiles.push(...files);
@@ -49,8 +149,32 @@ export async function discoverModelFiles(
     }
   }
 
-  // Remove duplicates
-  return [...new Set(allFiles)];
+  // Remove duplicates and log found files
+  const uniqueFiles = [...new Set(allFiles)];
+
+  if (uniqueFiles.length > 0) {
+    console.log(
+      `[Mongeese] 📁 Found ${uniqueFiles.length} potential model files`
+    );
+    if (process.env.DEBUG) {
+      uniqueFiles.slice(0, 5).forEach(file => {
+        console.log(`   • ${path.relative(process.cwd(), file)}`);
+      });
+      if (uniqueFiles.length > 5) {
+        console.log(`   • ... and ${uniqueFiles.length - 5} more`);
+      }
+    }
+  } else {
+    console.log("[Mongeese] ⚠️  No model files found with current patterns");
+    if (isNestJS) {
+      console.log("   💡 Make sure your schema files end with .schema.ts");
+      console.log(
+        "   💡 Check that schemas are in a 'schemas' folder or similar"
+      );
+    }
+  }
+
+  return uniqueFiles;
 }
 
 /**
@@ -235,14 +359,6 @@ export function generateSnapshotFromModels(
     const schema = model.schema;
     const collectionName = model.collection.collectionName;
 
-    // Exclude Mongeese's own collections
-    // if (
-    //   collectionName === "mongeese.snapshots" ||
-    //   collectionName === "mongeese.migrations"
-    // ) {
-    //   continue;
-    // }
-
     console.log(
       `[Mongeese] Processing model: ${model.modelName} -> ${collectionName}`
     );
@@ -273,7 +389,6 @@ export function generateSnapshotFromModels(
           type: "Virtual",
           nullable: true,
           required: false,
-          //   virtual: true,
         };
       }
     }
@@ -299,6 +414,7 @@ export function generateSnapshotFromModels(
 
 /**
  * Auto-discovers and loads Mongoose models, then generates a snapshot
+ * Automatically detects NestJS projects and uses appropriate detection method
  */
 export async function generateSnapshotFromCodebase(
   config: ModelDetectionConfig = {}
@@ -309,39 +425,108 @@ export async function generateSnapshotFromCodebase(
     loadedFiles: string[];
     loadErrors: Array<{ file: string; error: any }>;
     detectedModels: string[];
+    isNestJS: boolean;
+    detectionMethod?: string;
   };
 }> {
   console.log("[Mongeese] Auto-discovering Mongoose models...");
 
+  const isNestJS = isNestJSProject();
+
   try {
-    // Discover model files
-    const discoveredFiles = await discoverModelFiles(config);
+    let detectedModels: Model<any>[] = [];
+    let discoveredFiles: string[] = [];
+    let loadedFiles: string[] = [];
+    let loadErrors: Array<{ file: string; error: any }> = [];
+    let detectionMethod = "standard";
 
-    console.log(
-      `[Mongeese] Discovered ${discoveredFiles.length} potential model files`
-    );
-
-    // Load model files
-    const { loaded: loadedFiles, errors: loadErrors } = await loadModelFiles(
-      discoveredFiles,
-      config
-    );
-
-    console.log(
-      `[Mongeese] Successfully loaded ${loadedFiles.length} model files`
-    );
-
-    if (loadErrors.length > 0) {
-      console.warn(
-        `[Mongeese] Failed to load ${loadErrors.length} model files`
+    if (isNestJS) {
+      console.log(
+        "[Mongeese] 🚀 NestJS project detected - using enhanced detection"
       );
+
+      // Automatically use NestJS detection with sensible defaults
+      const nestjsConfig = {
+        ...config,
+        nestjs: {
+          bootstrap: true,
+          alwaysDiscoverFiles: false,
+          includeEntities: true,
+          ...config.nestjs, // Allow override if user provides nestjs config
+        },
+      };
+
+      const nestjsResult = await generateNestJSSnapshot(nestjsConfig);
+      detectedModels = nestjsResult.models;
+      loadErrors = nestjsResult.errors;
+      detectionMethod = nestjsResult.metadata.detectionMethod;
+
+      console.log(
+        `[Mongeese] ✅ NestJS detection completed using: ${detectionMethod}`
+      );
+      console.log(`[Mongeese] 📊 Found ${detectedModels.length} models`);
+    } else {
+      console.log("[Mongeese] 📁 Standard Mongoose project detected");
     }
 
-    // Generate snapshot from loaded models
-    const detectedModels = detectRegisteredModels();
+    // Fallback to standard detection if no models found
+    if (detectedModels.length === 0) {
+      console.log("[Mongeese] 🔄 Falling back to standard model detection...");
+
+      // Discover model files
+      discoveredFiles = await discoverModelFiles(config);
+
+      console.log(
+        `[Mongeese] 📂 Discovered ${discoveredFiles.length} potential model files`
+      );
+
+      // Load model files
+      const loadResult = await loadModelFiles(discoveredFiles, config);
+      loadedFiles = loadResult.loaded;
+      loadErrors = [...loadErrors, ...loadResult.errors];
+
+      console.log(
+        `[Mongeese] ✅ Successfully loaded ${loadedFiles.length} model files`
+      );
+
+      if (loadErrors.length > 0) {
+        console.warn(
+          `[Mongeese] ⚠️  Failed to load ${loadErrors.length} model files`
+        );
+        // Log specific errors in debug mode
+        if (process.env.DEBUG) {
+          loadErrors.forEach(({ file, error }) => {
+            console.warn(`   - ${path.basename(file)}: ${error.message}`);
+          });
+        }
+      }
+
+      // Generate snapshot from loaded models
+      detectedModels = detectRegisteredModels();
+      detectionMethod = isNestJS ? "nestjs-fallback" : "standard";
+    }
+
     console.log(
-      `[Mongeese] Detected ${detectedModels.length} registered models`
+      `[Mongeese] 🎯 Final result: ${detectedModels.length} registered models`
     );
+
+    // Log detected models for debugging
+    if (detectedModels.length > 0) {
+      console.log("[Mongeese] 📋 Detected models:");
+      detectedModels.forEach(model => {
+        console.log(
+          `   • ${model.modelName} → ${model.collection.collectionName}`
+        );
+      });
+    } else {
+      console.log("[Mongeese] ❌ No models detected. Please check:");
+      console.log("   • Your models are properly exported");
+      console.log("   • Model files follow naming conventions");
+      if (isNestJS) {
+        console.log("   • Your NestJS modules are properly configured");
+        console.log("   • @Schema() decorators are applied to your classes");
+      }
+    }
 
     const snapshot = generateSnapshotFromModels(detectedModels, config);
 
@@ -354,10 +539,12 @@ export async function generateSnapshotFromCodebase(
         detectedModels: detectedModels.map(
           m => `${m.modelName} -> ${m.collection.collectionName}`
         ),
+        isNestJS,
+        detectionMethod,
       },
     };
   } catch (error) {
-    console.error("[Mongeese] Error during snapshot generation:", error);
+    console.error("[Mongeese] ❌ Error during snapshot generation:", error);
     throw error;
   }
 }
