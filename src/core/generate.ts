@@ -73,8 +73,8 @@ export function formatMigrationCommands(commands: MigrationCommand[]): string {
         // Comment-only command
         lines.push(`    ${cmd.command}`);
       } else if (
-        cmd.command.includes("await ") ||
-        cmd.command.includes("session.")
+        (cmd.command.includes("await ") || cmd.command.includes("session.")) &&
+        !cmd.command.includes("session.startTransaction")
       ) {
         // Async command
         lines.push(`    await ${cmd.command.replace(/^await /, "")};`);
@@ -155,7 +155,8 @@ export function generateTSTemplate(
   migrationName: string,
   diffResult: DiffResult
 ): string {
-  return `import { Db } from "mongodb";
+  return `import { DbWithClient } from "mongeese.connection";
+import { ClientSession } from "mongodb";
 
 /**
  * Migration: ${migrationName}
@@ -171,14 +172,14 @@ export class ${migrationName} {
   /**
    * Apply the migration (up)
    */
-  public async up(db: Db): Promise<void> {
+  public async up(db: DbWithClient, session: ClientSession): Promise<void> {
 ${formatMigrationCommands(diffResult.up)}
   }
 
   /**
    * Revert the migration (down)
    */
-  public async down(db: Db): Promise<void> {
+  public async down(db: DbWithClient, session: ClientSession): Promise<void> {
 ${formatMigrationCommands(diffResult.down)}
   }
 }
@@ -206,14 +207,14 @@ class ${migrationName} {
   /**
    * Apply the migration (up)
    */
-  async up(db) {
+  async up(db, session) {
 ${formatMigrationCommands(diffResult.up)}
   }
 
   /**
    * Revert the migration (down)
    */
-  async down(db) {
+  async down(db, session) {
 ${formatMigrationCommands(diffResult.down)}
   }
 }

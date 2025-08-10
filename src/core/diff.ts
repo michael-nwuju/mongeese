@@ -815,74 +815,15 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
     allWarnings.push(...validatorDiff.warnings);
   }
 
-  // Wrap in transaction if multiple operations
-  if (allUp.length > 1) {
-    const transactionUp = [
-      {
-        command: "const session = db.client.startSession();",
-        description: "Start transaction session",
-        safetyLevel: "safe" as const,
-      },
-      {
-        command: "session.startTransaction();",
-        description: "Begin transaction",
-        safetyLevel: "safe" as const,
-      },
-      ...allUp.map(cmd => ({
-        ...cmd,
-        command: injectSessionIntoCommand(cmd.command),
-      })),
-      {
-        command: "await session.commitTransaction();",
-        description: "Commit transaction",
-        safetyLevel: "safe" as const,
-      },
-      {
-        command: "session.endSession();",
-        description: "End session",
-        safetyLevel: "safe" as const,
-      },
-    ];
+  const up = allUp.map(cmd => ({
+    ...cmd,
+    command: injectSessionIntoCommand(cmd.command),
+  }));
 
-    const transactionDown = [
-      {
-        command: "const session = db.client.startSession();",
-        description: "Start transaction session",
-        safetyLevel: "safe" as const,
-      },
-      {
-        command: "session.startTransaction();",
-        description: "Begin transaction",
-        safetyLevel: "safe" as const,
-      },
-      ...allDown.map(cmd => ({
-        ...cmd,
-        command: injectSessionIntoCommand(cmd.command),
-      })),
-      {
-        command: "await session.commitTransaction();",
-        description: "Commit transaction",
-        safetyLevel: "safe" as const,
-      },
-      {
-        command: "session.endSession();",
-        description: "End session",
-        safetyLevel: "safe" as const,
-      },
-    ];
+  const down = allDown.map(cmd => ({
+    ...cmd,
+    command: injectSessionIntoCommand(cmd.command),
+  }));
 
-    return {
-      up: transactionUp,
-      down: transactionDown,
-      warnings: allWarnings,
-      metadata,
-    };
-  }
-
-  return {
-    up: allUp,
-    down: allDown,
-    warnings: allWarnings,
-    metadata,
-  };
+  return { up, down, warnings: allWarnings, metadata };
 }
