@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { Db } from "mongodb";
+import { ClientSession, Db } from "mongodb";
 import { DbWithClient } from "../types";
 import {
   getMigrationFiles,
@@ -11,6 +11,7 @@ import {
 } from "./reader";
 import { MigrateOptions } from "../types";
 import { MigrationStore } from "./store";
+import { createSessionAwareDb } from "../utilities/create-session-aware-db";
 
 /**
  * Get applied migrations from database (now using isApplied in mongeese.migrations)
@@ -26,13 +27,15 @@ export async function recordMigrationApplied(
   db: Db,
   migration: MigrationFile,
   direction: "up" | "down",
-  executionTime: number
+  executionTime: number,
+  session?: ClientSession
 ): Promise<void> {
   const store = new MigrationStore(db);
   await store.setMigrationApplied(
     migration.filename,
     direction === "up",
-    executionTime
+    executionTime,
+    session
   );
 }
 
@@ -75,27 +78,99 @@ export async function executeMigration(
       throw new Error("Migration instance not loaded");
     }
 
-    // Execute the migration
-    if (direction === "up") {
-      await loadedMigration.instance.up(db);
-    } else {
-      await loadedMigration.instance.down(db);
+    // Start a session for the migration
+    const session = db.client.startSession();
+
+    try {
+      await session.withTransaction(async session => {
+        // Create a session-aware database instance
+        const rawDb = db.client.db(db.databaseName);
+
+        const sessionDb = createSessionAwareDb(rawDb, session);
+
+        // Execute the migration with a session-aware database
+        if (direction === "up") {
+          await loadedMigration!.instance!.up(sessionDb);
+        } else {
+          await loadedMigration!.instance!.down(sessionDb);
+        }
+
+        // Record the migration within the same transaction using the session
+        const executionTime = Date.now() - startTime;
+
+        // Record the migration
+        await recordMigrationApplied(db, migration, direction, executionTime);
+
+        console.log(
+          chalk.green(
+            `   ✅ Migration ${
+              direction === "up" ? "applied" : "reverted"
+            } successfully (${executionTime}ms)`
+          )
+        );
+      });
+    } catch (error) {
+      console.warn(chalk.yellow("[Mongeese] migration in session failed..."));
+      await session.abortTransaction();
+    } finally {
+      await session.endSession();
     }
-
+  } catch (error: any) {
     const executionTime = Date.now() - startTime;
 
-    // Record the migration
-    await recordMigrationApplied(db, migration, direction, executionTime);
+    // Check if it's a session-related error and retry without session
+    if (
+      error.message &&
+      (error.message.includes("session") ||
+        error.message.includes("Session") ||
+        error.name === "MongoExpiredSessionError")
+    ) {
+      console.warn(
+        chalk.yellow(
+          "   ⚠️  Session issue detected, retrying without transaction..."
+        )
+      );
 
-    console.log(
-      chalk.green(
-        `   ✅ Migration ${
-          direction === "up" ? "applied" : "reverted"
-        } successfully (${executionTime}ms)`
-      )
-    );
-  } catch (error) {
-    const executionTime = Date.now() - startTime;
+      try {
+        // Load the migration file again
+        const loadedMigration = await loadMigrationFile(migration);
+
+        if (!loadedMigration.instance) {
+          throw new Error("Migration instance not loaded");
+        }
+
+        // Execute the migration without session
+        if (direction === "up") {
+          await loadedMigration.instance.up(db);
+        } else {
+          await loadedMigration.instance.down(db);
+        }
+
+        // Wait a bit to ensure any pending operations complete
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Record the migration using a fresh connection without session
+        const executionTime = Date.now() - startTime;
+        await recordMigrationApplied(db, migration, direction, executionTime);
+
+        console.log(
+          chalk.green(
+            `   ✅ Migration ${
+              direction === "up" ? "applied" : "reverted"
+            } successfully (${executionTime}ms)`
+          )
+        );
+        return;
+      } catch (retryError) {
+        console.error(
+          chalk.red(
+            `   ❌ Migration retry failed after ${Date.now() - startTime}ms:`
+          ),
+          retryError
+        );
+        throw retryError;
+      }
+    }
 
     console.error(
       chalk.red(`   ❌ Migration failed after ${executionTime}ms:`),

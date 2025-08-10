@@ -22,8 +22,8 @@ export interface DbWithClient extends Db {
  * Factory function that returns a DbWithClient object with the client attached.
  * This allows Mongeese to use transactions for migration operations.
  */
-export async function getDbWithClient(uri?: string, dbName?: string): Promise<DbWithClient> {
-  const mongoUri = uri || process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
+export async function getDbWithClient(dbName?: string): Promise<DbWithClient> {
+  const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
   const client = new MongoClient(mongoUri);
   
   await client.connect();
@@ -33,18 +33,6 @@ export async function getDbWithClient(uri?: string, dbName?: string): Promise<Db
   (db as DbWithClient).client = client;
   
   return db as DbWithClient;
-}
-
-// Legacy function for backward compatibility - use getDbWithClient instead
-export async function getDbWithMongoose(): Promise<Db> {
-  console.warn("[Mongeese] getDbWithMongoose is deprecated. Please use getDbWithClient for transaction support.");
-  const mongooseConnection = await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
-  
-  if (!mongooseConnection) {
-    throw new Error("Failed to connect to MongoDB");
-  }
-  
-  return mongooseConnection.connection.db;
 }
 `;
 
@@ -57,8 +45,8 @@ const { MongoClient } = require("mongodb");
  * Factory function that returns a DbWithClient object with the client attached.
  * This allows Mongeese to use transactions for migration operations.
  */
-async function getDbWithClient(uri, dbName) {
-  const mongoUri = uri || process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
+async function getDbWithClient(dbName) {
+  const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
   const client = new MongoClient(mongoUri);
   
   await client.connect();
@@ -70,19 +58,7 @@ async function getDbWithClient(uri, dbName) {
   return db;
 }
 
-// Legacy function for backward compatibility - use getDbWithClient instead
-async function getDbWithMongoose() {
-  console.warn("[Mongeese] getDbWithMongoose is deprecated. Please use getDbWithClient for transaction support.");
-  const mongooseConnection = await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb");
-  
-  if (!mongooseConnection) {
-    throw new Error("Failed to connect to MongoDB");
-  }
-  
-  return mongooseConnection.connection.db;
-}
-
-module.exports = { getDbWithClient, getDbWithMongoose };
+module.exports = { getDbWithClient };
 `;
 
 const BOOTSTRAP_TEMPLATE =

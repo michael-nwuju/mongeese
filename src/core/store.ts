@@ -2,6 +2,7 @@ import { Db, Collection, Filter, WithId } from "mongodb";
 import { Snapshot, Migration } from "../types";
 import { generateSnapshot, verifySnapshot } from "./snapshot";
 import { diffSnapshots } from "./diff";
+import { ClientSession } from "mongoose";
 
 export class MigrationStore {
   private db: Db;
@@ -232,7 +233,8 @@ export class MigrationStore {
   async setMigrationApplied(
     filename: string,
     isApplied: boolean,
-    executionTime: number
+    executionTime: number,
+    session?: ClientSession
   ): Promise<void> {
     await this.migrations.updateOne(
       { filename },
@@ -243,7 +245,7 @@ export class MigrationStore {
           executionTime,
         },
       },
-      { upsert: true }
+      { upsert: true, session }
     );
   }
 }
