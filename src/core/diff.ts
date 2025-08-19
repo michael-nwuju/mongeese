@@ -209,6 +209,242 @@ function detectFieldRenames(
 }
 
 /**
+ * Enhanced field diffing with code-first approach and smart default handling
+ */
+function diffFieldsCodeFirst(
+  collectionName: string,
+  dbFields: { [name: string]: FieldDefinition }, // Database snapshot (comparison only)
+  codeFields: { [name: string]: FieldDefinition } // Code snapshot (source of truth)
+): { up: MigrationCommand[]; down: MigrationCommand[]; warnings: string[] } {
+  const up: MigrationCommand[] = [];
+
+  const down: MigrationCommand[] = [];
+
+  const warnings: string[] = [];
+
+  const dbFieldNames = new Set(Object.keys(dbFields));
+
+  const codeFieldNames = new Set(Object.keys(codeFields));
+
+  console.log(
+    `[Mongeese] 🔍 Diffing fields for collection '${collectionName}'`
+  );
+  console.log(`   📊 Database has ${dbFieldNames.size} fields`);
+  console.log(`   💻 Code defines ${codeFieldNames.size} fields`);
+
+  // NEW FIELDS: In code but not in database
+  for (const fieldName of codeFieldNames) {
+    if (!dbFieldNames.has(fieldName)) {
+      const codeField = codeFields[fieldName];
+
+      console.log(
+        `   ➕ New field detected: '${fieldName}' (${codeField.type})`
+      );
+
+      // Smart default value handling
+      let migrationValue: any = null;
+      let description = `Add field '${fieldName}' to collection '${collectionName}'`;
+
+      if (codeField.default !== undefined) {
+        // Use the default value from code definition
+        migrationValue = codeField.default;
+        description += ` with default value`;
+
+        console.log(
+          `     🎯 Using code default: ${JSON.stringify(migrationValue)}`
+        );
+      } else if (!codeField.nullable && codeField.required) {
+        // Field is required and non-nullable but has no default
+        // We need to provide a sensible default based on type
+        switch (codeField.type) {
+          case "String":
+            migrationValue = "";
+            break;
+          case "Number":
+            migrationValue = 0;
+            break;
+          case "Boolean":
+            migrationValue = false;
+            break;
+          case "Date":
+            migrationValue = new Date();
+            break;
+          case "Array":
+            migrationValue = [];
+            break;
+          case "Object":
+            migrationValue = {};
+            break;
+          default:
+            migrationValue = null;
+        }
+
+        console.log(
+          `     ⚡ Generated default for required field: ${JSON.stringify(
+            migrationValue
+          )}`
+        );
+        description += ` with generated default (required field)`;
+
+        warnings.push(
+          `⚠️  Field '${fieldName}' in '${collectionName}' is required but has no default. Using type-based default: ${JSON.stringify(
+            migrationValue
+          )}`
+        );
+      } else {
+        // Field is optional or nullable, use null
+        migrationValue = null;
+        console.log(`     ✅ Optional field, using null default`);
+      }
+
+      up.push({
+        command: `db.collection("${collectionName}").updateMany({}, { $set: { "${fieldName}": ${JSON.stringify(
+          migrationValue
+        )} } })`,
+        description,
+        safetyLevel: "safe",
+        metadata: {
+          fieldPath: fieldName,
+          fieldDefinition: codeField,
+          migrationValue,
+          reason: "new_field",
+        },
+      });
+
+      down.push({
+        command: `db.collection("${collectionName}").updateMany({}, { $unset: { "${fieldName}": "" } })`,
+        description: `Remove field '${fieldName}' from collection '${collectionName}'`,
+        safetyLevel: "warning",
+        metadata: { fieldPath: fieldName, reason: "rollback_new_field" },
+      });
+    }
+  }
+
+  // REMOVED FIELDS: In database but not in code
+  for (const fieldName of dbFieldNames) {
+    if (!codeFieldNames.has(fieldName)) {
+      console.log(`   ➖ Removed field detected: '${fieldName}'`);
+
+      const dbField = dbFields[fieldName];
+
+      up.push({
+        command: `db.collection("${collectionName}").updateMany({}, { $unset: { "${fieldName}": "" } })`,
+        description: `Remove field '${fieldName}' from collection '${collectionName}' (no longer in code)`,
+        safetyLevel: "warning",
+        metadata: { fieldPath: fieldName, reason: "field_removed_from_code" },
+      });
+
+      down.push({
+        command: `db.collection("${collectionName}").updateMany({}, { $set: { "${fieldName}": null } })`,
+        description: `Restore field '${fieldName}' to collection '${collectionName}'`,
+        safetyLevel: "safe",
+        metadata: {
+          fieldPath: fieldName,
+          fieldDefinition: dbField,
+          reason: "restore_removed_field",
+        },
+      });
+
+      warnings.push(
+        `⚠️  Field '${fieldName}' exists in database but not in code. Will be removed.`
+      );
+    }
+  }
+
+  // MODIFIED FIELDS: Exist in both but may have different characteristics
+  // NOTE: For modified fields, we trust the code definition completely
+  // We only generate migrations for structural changes that affect the database
+  for (const fieldName of codeFieldNames) {
+    if (dbFieldNames.has(fieldName)) {
+      const codeField = codeFields[fieldName];
+      const dbField = dbFields[fieldName];
+
+      const comparison = compareFields(dbField, codeField);
+
+      if (comparison.changed) {
+        console.log(
+          `   🔄 Modified field: '${fieldName}' - ${comparison.changes.join(
+            ", "
+          )}`
+        );
+
+        // For most field property changes (type, nullable, required, enum),
+        // we don't need to modify existing data - Mongoose will handle validation
+        // Only generate migrations for changes that require data transformation
+
+        const hasTypeChange = comparison.changes.some(change =>
+          change.startsWith("type:")
+        );
+        const hasDefaultChange = comparison.changes.some(change =>
+          change.startsWith("default:")
+        );
+
+        if (hasTypeChange) {
+          warnings.push(
+            `⚠️  Type change for '${fieldName}' in '${collectionName}': ${dbField.type} → ${codeField.type}. Existing data may need manual migration.`
+          );
+
+          up.push({
+            command: `// TODO: Migrate data for type change: ${fieldName} (${dbField.type} → ${codeField.type})`,
+            description: `Field '${fieldName}' type changed - may require data migration`,
+            safetyLevel: "warning",
+            metadata: {
+              fieldPath: fieldName,
+              changes: comparison.changes,
+              fromField: dbField,
+              toField: codeField,
+              reason: "type_change",
+            },
+          });
+
+          down.push({
+            command: `// TODO: Revert data migration for: ${fieldName} (${codeField.type} → ${dbField.type})`,
+            description: `Revert type change for field '${fieldName}'`,
+            safetyLevel: "warning",
+            metadata: {
+              fieldPath: fieldName,
+              fieldDefinition: dbField,
+              reason: "revert_type_change",
+            },
+          });
+        } else {
+          // For non-type changes, just log that the schema definition changed
+          up.push({
+            command: `// Schema updated: ${fieldName} - ${comparison.changes.join(
+              ", "
+            )}`,
+            description: `Field '${fieldName}' definition updated in code`,
+            safetyLevel: "safe",
+            metadata: {
+              fieldPath: fieldName,
+              changes: comparison.changes,
+              fromField: dbField,
+              toField: codeField,
+              reason: "schema_definition_change",
+            },
+          });
+
+          down.push({
+            command: `// Schema reverted: ${fieldName}`,
+            description: `Revert field '${fieldName}' definition`,
+            safetyLevel: "safe",
+            metadata: {
+              fieldPath: fieldName,
+              fieldDefinition: dbField,
+              reason: "revert_schema_change",
+            },
+          });
+        }
+      }
+    }
+  }
+
+  console.log(`   ✅ Field diff completed: ${up.length} migrations generated`);
+
+  return { up, down, warnings };
+}
+
+/**
  * Diff collections (add/remove collections)
  */
 function diffCollections(
@@ -685,13 +921,16 @@ function injectSessionIntoCommand(command: string): string {
   if (command.includes("db.collection(")) {
     // Find the last closing parenthesis and inject session before it
     const lastParenIndex = command.lastIndexOf(")");
+
     if (lastParenIndex > -1) {
       // Check if there are already options
       const beforeLastParen = command.substring(0, lastParenIndex);
+
       const afterLastParen = command.substring(lastParenIndex);
 
       // Look for existing options object
       const optionsStart = beforeLastParen.lastIndexOf("{");
+
       const commaBeforeOptions = beforeLastParen.lastIndexOf(",");
 
       if (optionsStart > commaBeforeOptions) {
@@ -721,12 +960,15 @@ function injectSessionIntoCommand(command: string): string {
 }
 
 /**
- * Main diff function that orchestrates all diffing operations
+ * Enhanced diff function that treats code snapshot as source of truth
+ * Database snapshot is used only for comparison to detect what needs migration
  */
-export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
-  const normalizedFrom = normalizeSnapshot(from);
-
-  const normalizedTo = normalizeSnapshot(to);
+export function diffSnapshots(
+  dbSnapshot: Snapshot, // Database state (for comparison)
+  codeSnapshot: Snapshot // Code state (source of truth)
+): DiffResult {
+  const normalizedDb = normalizeSnapshot(dbSnapshot);
+  const normalizedCode = normalizeSnapshot(codeSnapshot);
 
   const allUp: MigrationCommand[] = [];
 
@@ -741,10 +983,10 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
     validators: { added: [], removed: [], modified: [] },
   };
 
-  // Diff collections
+  // Diff collections (code is truth, database is current state)
   const collectionDiff = diffCollections(
-    normalizedFrom.collections,
-    normalizedTo.collections
+    normalizedDb.collections,
+    normalizedCode.collections
   );
 
   allUp.push(...collectionDiff.up);
@@ -754,67 +996,68 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
   allWarnings.push(...collectionDiff.warnings);
 
   // Track collection changes
-  const fromCollectionNames = Object.keys(normalizedFrom.collections);
+  const dbCollectionNames = Object.keys(normalizedDb.collections);
+  const codeCollectionNames = Object.keys(normalizedCode.collections);
 
-  const toCollectionNames = Object.keys(normalizedTo.collections);
-
-  metadata.collections.added = toCollectionNames.filter(
-    name => !fromCollectionNames.includes(name)
+  metadata.collections.added = codeCollectionNames.filter(
+    name => !dbCollectionNames.includes(name)
   );
 
-  metadata.collections.removed = fromCollectionNames.filter(
-    name => !toCollectionNames.includes(name)
+  metadata.collections.removed = dbCollectionNames.filter(
+    name => !codeCollectionNames.includes(name)
   );
 
-  metadata.collections.modified = fromCollectionNames.filter(name =>
-    toCollectionNames.includes(name)
+  metadata.collections.modified = codeCollectionNames.filter(name =>
+    dbCollectionNames.includes(name)
   );
 
-  // Diff fields, indexes, and validators for each collection
-  for (const collectionName of metadata.collections.modified) {
-    const fromCollection = normalizedFrom.collections[collectionName];
+  // Diff fields for each collection using code-first approach
+  for (const collectionName of codeCollectionNames) {
+    const codeCollection = normalizedCode.collections[collectionName];
+    const dbCollection = normalizedDb.collections[collectionName];
 
-    const toCollection = normalizedTo.collections[collectionName];
+    if (dbCollection) {
+      // Collection exists in both - diff the fields
+      const fieldDiff = diffFieldsCodeFirst(
+        collectionName,
+        dbCollection.fields, // Database state
+        codeCollection.fields // Code state (truth)
+      );
 
-    // Diff fields
-    const fieldDiff = diffFields(
-      collectionName,
-      fromCollection.fields,
-      toCollection.fields
-    );
+      allUp.push(...fieldDiff.up);
+      allDown.push(...fieldDiff.down);
+      allWarnings.push(...fieldDiff.warnings);
+    }
 
-    allUp.push(...fieldDiff.up);
+    // No need to diff indexes or validators, mongoose does this under the hood! 🔥
 
-    allDown.push(...fieldDiff.down);
+    //   // Diff indexes
+    //   const indexDiff = diffIndexes(
+    //     collectionName,
+    //     fromCollection.indexes || [],
+    //     toCollection.indexes || []
+    //   );
 
-    allWarnings.push(...fieldDiff.warnings);
+    //   allUp.push(...indexDiff.up);
 
-    // Diff indexes
-    const indexDiff = diffIndexes(
-      collectionName,
-      fromCollection.indexes || [],
-      toCollection.indexes || []
-    );
+    //   allDown.push(...indexDiff.down);
 
-    allUp.push(...indexDiff.up);
+    //   allWarnings.push(...indexDiff.warnings);
 
-    allDown.push(...indexDiff.down);
+    //   // Diff validators
+    //   const validatorDiff = diffValidators(
+    //     collectionName,
+    //     fromCollection.validator,
+    //     toCollection.validator
+    //   );
 
-    allWarnings.push(...indexDiff.warnings);
+    //   allUp.push(...validatorDiff.up);
 
-    // Diff validators
-    const validatorDiff = diffValidators(
-      collectionName,
-      fromCollection.validator,
-      toCollection.validator
-    );
-
-    allUp.push(...validatorDiff.up);
-
-    allDown.push(...validatorDiff.down);
-    allWarnings.push(...validatorDiff.warnings);
+    //   allDown.push(...validatorDiff.down);
+    //   allWarnings.push(...validatorDiff.warnings);
   }
 
+  // Add session support to all commands
   const up = allUp.map(cmd => ({
     ...cmd,
     command: injectSessionIntoCommand(cmd.command),
@@ -824,6 +1067,12 @@ export function diffSnapshots(from: Snapshot, to: Snapshot): DiffResult {
     ...cmd,
     command: injectSessionIntoCommand(cmd.command),
   }));
+
+  console.log(
+    `[Mongeese] ✅ Diff completed: ${up.length} up migrations, ${down.length} down migrations`
+  );
+
+  console.log(`[Mongeese] ⚠️  Generated ${allWarnings.length} warnings`);
 
   return { up, down, warnings: allWarnings, metadata };
 }

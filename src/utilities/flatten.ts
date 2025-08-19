@@ -1,4 +1,5 @@
 import { FieldMap } from "../types";
+import { detectFieldType } from "./detect-field-type";
 
 export function flatten(
   obj: any,
@@ -11,15 +12,22 @@ export function flatten(
     }
 
     const path = prefix ? `${prefix}.${key}` : key;
+    const value = obj[key];
 
     if (
-      obj[key] !== null &&
-      typeof obj[key] === "object" &&
-      !Array.isArray(obj[key])
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !(value instanceof Date) &&
+      !value._bsontype && // Skip BSON types like ObjectID
+      !Buffer.isBuffer(value)
     ) {
-      flatten(obj[key], path, result);
+      // Recursively flatten nested objects
+      flatten(value, path, result);
     } else {
-      result[path] = "Mixed"; // Default type for now
+      // Use proper type detection instead of always assigning "Mixed"
+      const detectedType = detectFieldType(value);
+      result[path] = detectedType;
     }
   }
   return result;

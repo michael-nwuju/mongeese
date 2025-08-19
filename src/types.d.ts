@@ -225,3 +225,23 @@ export interface MongeesConfig {
     bootstrap?: boolean;
   };
 }
+
+// Field summary statistics for efficient processing
+export interface FieldStats {
+  totalDocuments: number; // Total documents sampled
+  presentCount: number; // Documents where field exists (even if null/undefined)
+  nullCount: number; // Documents where field is explicitly null
+  undefinedCount: number; // Documents where field is explicitly undefined
+  typeSet: Set<string>; // Types of non-nullish values
+  valueSet: Set<string>; // For detecting defaults
+  // Remove stringValues since we're not inferring enums anymore
+}
+
+// Simplified field detection for database comparison
+export interface DatabaseFieldInfo {
+  exists: boolean;
+  hasNullValues: boolean;
+  hasUndefinedValues: boolean;
+  sampleCount: number;
+  presentCount: number;
+}
