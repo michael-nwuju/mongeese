@@ -109,9 +109,10 @@ export async function executeMigration(
           )
         );
       });
-    } catch (error) {
-      console.warn(chalk.yellow("[Mongeese] migration in session failed..."));
-      await session.abortTransaction();
+    } catch (error: any) {
+      console.error(chalk.yellow("[Mongeese] migration in session failed -"));
+      console.log(`\n${error?.message}:`);
+      console.log({ MigrationExecutionError: error });
     } finally {
       await session.endSession();
     }

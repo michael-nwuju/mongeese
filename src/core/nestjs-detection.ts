@@ -1,6 +1,7 @@
+import "reflect-metadata";
 import { Module } from "@nestjs/common";
-import { MongooseModule } from "@nestjs/mongoose";
-import mongoose, { Schema, Model } from "mongoose";
+import { MongooseModule, getConnectionToken } from "@nestjs/mongoose";
+import mongoose, { Schema, Model, Connection } from "mongoose";
 import * as path from "path";
 import { glob } from "glob";
 import { ModelDetectionConfig } from "../types";
@@ -10,31 +11,27 @@ import { ModelDetectionConfig } from "../types";
  */
 export class NestJSModelDetector {
   /**
-   * Discovers NestJS schema files using common patterns
+   * Discover NestJS schema files using common & fallback patterns
    */
   static async discoverNestJSSchemaFiles(
     config: ModelDetectionConfig = {}
   ): Promise<string[]> {
     const nestjsPatterns = [
-      // Standard NestJS patterns
       "**/*.schema.{js,ts}",
       "**/*.model.{js,ts}",
+      "**/*Schema.{js,ts}",
+      "**/*.entity.{js,ts}", // for people migrating from TypeORM
       "**/schemas/**/*.{js,ts}",
-      "**/entities/**/*.{js,ts}", // Some use entities folder
+      "**/entities/**/*.{js,ts}",
       "**/models/**/*.{js,ts}",
-
-      // Module-specific patterns
       "**/modules/**/schemas/**/*.{js,ts}",
       "**/modules/**/*.schema.{js,ts}",
       "**/src/**/schemas/**/*.{js,ts}",
       "**/src/**/*.schema.{js,ts}",
-
-      // Custom patterns from config
-      ...(config.modelPaths || []),
+      ...(config.modelPaths || []), // custom user patterns
     ];
 
     const allFiles: string[] = [];
-
     for (const pattern of nestjsPatterns) {
       try {
         const files = await glob(pattern, {
@@ -48,10 +45,10 @@ export class NestJSModelDetector {
           absolute: true,
         });
         allFiles.push(...files);
-      } catch (error) {
+      } catch (err) {
         console.warn(
           `[Mongeese] Failed to glob NestJS pattern ${pattern}:`,
-          error
+          err
         );
       }
     }
@@ -60,7 +57,7 @@ export class NestJSModelDetector {
   }
 
   /**
-   * Loads NestJS schema files and extracts schema definitions
+   * Load schema files and extract schema definitions
    */
   static async loadNestJSSchemaFiles(filePaths: string[]): Promise<{
     schemas: Array<{ name: string; schema: Schema; collectionName?: string }>;
@@ -75,21 +72,17 @@ export class NestJSModelDetector {
 
     for (const filePath of filePaths) {
       try {
-        // Clear require cache
         delete require.cache[path.resolve(filePath)];
-
         const moduleExports = require(filePath);
 
-        // Look for exported schemas and their metadata
-        const schemaInfo = this.extractSchemaFromModule(
+        const foundSchemas = this.extractSchemasFromExports(
           moduleExports,
           filePath
         );
-        if (schemaInfo) {
-          schemas.push(schemaInfo);
-        }
-      } catch (error) {
-        errors.push({ file: filePath, error });
+
+        schemas.push(...foundSchemas);
+      } catch (err) {
+        errors.push({ file: filePath, error: err });
       }
     }
 
@@ -97,63 +90,67 @@ export class NestJSModelDetector {
   }
 
   /**
-   * Extracts schema information from a loaded module
+   * Extract schemas from a given module's exports
    */
-  private static extractSchemaFromModule(
+  private static extractSchemasFromExports(
     moduleExports: any,
     filePath: string
-  ): { name: string; schema: Schema; collectionName?: string } | null {
-    // Method 1: Look for Schema class with @Schema() decorator
+  ): Array<{ name: string; schema: Schema; collectionName?: string }> {
+    const results: Array<{
+      name: string;
+      schema: Schema;
+      collectionName?: string;
+    }> = [];
+
     for (const [exportName, exportValue] of Object.entries(moduleExports)) {
-      if (exportValue && typeof exportValue === "function") {
-        // Check if it's a class with Mongoose metadata
-        const schemaMetadata = Reflect.getMetadata?.(
-          "__mongoose_schema__",
-          exportValue
-        );
-        if (schemaMetadata) {
-          return {
-            name: exportName,
-            schema: schemaMetadata,
-            collectionName: this.extractCollectionName(exportValue, exportName),
-          };
-        }
+      // Method 1: Class with @Schema() decorator
+      const schemaMetadata = Reflect.getMetadata?.(
+        "__mongoose_schema__",
+        exportValue as any
+      );
+
+      if (schemaMetadata instanceof Schema) {
+        results.push({
+          name: exportName,
+          schema: schemaMetadata,
+          collectionName: this.extractCollectionName(exportValue, exportName),
+        });
+        continue;
+      }
+
+      // Method 2: Direct Schema export
+      if (exportValue instanceof Schema) {
+        results.push({
+          name: exportName,
+          schema: exportValue,
+          collectionName: this.inferCollectionName(exportName),
+        });
+        continue;
+      }
+
+      // Method 3: SchemaFactory.createForClass() result
+      if (
+        exportValue?.constructor?.name === "Schema" &&
+        (exportValue as any)?.obj
+      ) {
+        results.push({
+          name: exportName,
+          schema: exportValue as Schema,
+          collectionName: this.inferCollectionName(exportName),
+        });
       }
     }
 
-    // Method 2: Look for explicit Schema exports
-    if (moduleExports.schema && moduleExports.schema instanceof Schema) {
-      const name =
-        moduleExports.name || path.basename(filePath, path.extname(filePath));
-      return {
-        name,
-        schema: moduleExports.schema,
-        collectionName: moduleExports.collectionName,
-      };
-    }
-
-    // Method 3: Look for SchemaFactory.createForClass results
-    for (const [key, value] of Object.entries(moduleExports)) {
-      if (value instanceof Schema) {
-        return {
-          name: key,
-          schema: value as Schema,
-          collectionName: this.inferCollectionName(key),
-        };
-      }
-    }
-
-    return null;
+    return results;
   }
 
   /**
-   * Extracts collection name from NestJS schema class
+   * Extract collection name from NestJS schema class
    */
   private static extractCollectionName(
     schemaClass: any,
     fallbackName: string
   ): string {
-    // Check for @Schema({ collection: 'name' }) decorator
     const schemaOptions = Reflect.getMetadata?.(
       "__mongoose_schema_options__",
       schemaClass
@@ -161,69 +158,48 @@ export class NestJSModelDetector {
     if (schemaOptions?.collection) {
       return schemaOptions.collection;
     }
-
-    // Infer from class name
     return this.inferCollectionName(fallbackName);
   }
 
   /**
-   * Infers collection name from schema name (plural, lowercase)
+   * Infer collection name from schema name
    */
   private static inferCollectionName(schemaName: string): string {
-    // Remove 'Schema' suffix if present
     let name = schemaName.replace(/Schema$/, "");
-
-    // Convert PascalCase to lowercase
     name = name.charAt(0).toLowerCase() + name.slice(1);
 
-    // Simple pluralization (extend this for better pluralization)
-    if (name.endsWith("y")) {
-      return name.slice(0, -1) + "ies";
-    } else if (
-      name.endsWith("s") ||
-      name.endsWith("x") ||
-      name.endsWith("ch") ||
-      name.endsWith("sh")
-    ) {
-      return name + "es";
-    } else {
-      return name + "s";
-    }
+    if (name.endsWith("y")) return name.slice(0, -1) + "ies";
+    if (/(s|x|ch|sh)$/.test(name)) return name + "es";
+    return name + "s";
   }
 
   /**
-   * Registers discovered schemas with Mongoose
+   * Register discovered schemas with mongoose
    */
   static registerSchemasWithMongoose(
     schemas: Array<{ name: string; schema: Schema; collectionName?: string }>
   ): Model<any>[] {
     const models: Model<any>[] = [];
-
     for (const { name, schema, collectionName } of schemas) {
       try {
-        // Check if model already exists
         if (mongoose.models[name]) {
           models.push(mongoose.models[name]);
           continue;
         }
-
-        // Register the model
         const model = mongoose.model(name, schema, collectionName);
         models.push(model);
-
         console.log(
           `[Mongeese] Registered NestJS model: ${name} -> ${model.collection.collectionName}`
         );
-      } catch (error) {
-        console.warn(`[Mongeese] Failed to register model ${name}:`, error);
+      } catch (err) {
+        console.warn(`[Mongeese] Failed to register model ${name}:`, err);
       }
     }
-
     return models;
   }
 
   /**
-   * Attempts to bootstrap a minimal NestJS app to register models
+   * Bootstrap a minimal NestJS app to detect models
    */
   static async bootstrapNestJSApp(config: ModelDetectionConfig = {}): Promise<{
     models: Model<any>[];
@@ -233,7 +209,6 @@ export class NestJSModelDetector {
     let models: Model<any>[] = [];
 
     try {
-      // Try to find app.module.ts or main.ts
       const appFiles = await glob("**/app.module.{js,ts}", {
         ignore: ["**/node_modules/**", "**/dist/**"],
         absolute: true,
@@ -246,48 +221,38 @@ export class NestJSModelDetector {
       const { NestFactory } = require("@nestjs/core");
       const appModule = require(appFiles[0]);
 
-      // Create a minimal NestJS application
       const app = await NestFactory.create(
         appModule.AppModule || appModule.default,
-        {
-          logger: false, // Disable logging during bootstrap
-        }
+        { logger: false }
       );
 
-      // Get the mongoose connection from the app
-      const connection = app.get("DatabaseConnection") || mongoose.connection;
+      await app.init();
 
-      // Extract registered models
-      models = Object.values(mongoose.models) as Model<any>[];
+      const connection: Connection = app.get(getConnectionToken());
+      models = connection.modelNames().map(name => connection.model(name));
 
       await app.close();
-    } catch (error) {
-      errors.push(error);
-
-      if ((error as any).message) {
-        console.warn(
-          "[Mongeese] Failed to bootstrap NestJS app:",
-          (error as any).message
-        );
-      }
+    } catch (err: any) {
+      errors.push(err);
+      console.warn("[Mongeese] Failed to bootstrap NestJS app:", err.message);
     }
 
     return { models, errors };
   }
 }
 
-// Enhanced detection function that automatically tries multiple methods
+/**
+ * Main enhanced detection function
+ */
 export async function generateNestJSSnapshot(
   config: ModelDetectionConfig = {}
 ) {
   console.log("[Mongeese] 🔍 Using enhanced NestJS model detection...");
-
   let allModels: Model<any>[] = [];
   const errors: any[] = [];
   let detectionMethod = "none";
 
-  // Method 1: Try to bootstrap NestJS app (most reliable)
-  // This is enabled by default for NestJS projects
+  // Method 1: Bootstrap NestJS app
   console.log("[Mongeese] 🚀 Attempting to bootstrap NestJS application...");
   try {
     const { models: bootstrapModels, errors: bootstrapErrors } =
@@ -300,19 +265,17 @@ export async function generateNestJSSnapshot(
         `[Mongeese] ✅ Bootstrap successful: ${bootstrapModels.length} models found`
       );
     } else {
-      console.log("[Mongeese] ⚠️  Bootstrap completed but no models found");
+      console.log("[Mongeese] ⚠️ Bootstrap completed but no models found");
     }
-
     errors.push(...bootstrapErrors);
-  } catch (error) {
-    console.log("[Mongeese] ⚠️  Bootstrap failed, will try file discovery");
-    errors.push(error);
+  } catch (err) {
+    console.log("[Mongeese] ⚠️ Bootstrap failed, will try file discovery");
+    errors.push(err);
   }
 
-  // Method 2: Direct schema file discovery (fallback or supplement)
+  // Method 2: File discovery if bootstrap fails
   if (allModels.length === 0) {
     console.log("[Mongeese] 📁 Discovering NestJS schema files...");
-
     try {
       const schemaFiles = await NestJSModelDetector.discoverNestJSSchemaFiles(
         config
@@ -324,30 +287,21 @@ export async function generateNestJSSnapshot(
           await NestJSModelDetector.loadNestJSSchemaFiles(schemaFiles);
 
         console.log(`[Mongeese] 🔍 Extracted ${schemas.length} schemas`);
-
         if (schemas.length > 0) {
           const discoveredModels =
             NestJSModelDetector.registerSchemasWithMongoose(schemas);
           allModels.push(...discoveredModels);
-          detectionMethod =
-            allModels.length > 0 ? "file-discovery" : detectionMethod;
+          if (allModels.length > 0) detectionMethod = "file-discovery";
         }
-
         errors.push(...loadErrors);
       }
-    } catch (error) {
-      errors.push(error);
-
-      if ((error as any).message) {
-        console.warn(
-          "[Mongeese] ⚠️  Schema file discovery failed:",
-          (error as any).message
-        );
-      }
+    } catch (err: any) {
+      errors.push(err);
+      console.warn("[Mongeese] ⚠️ Schema file discovery failed:", err.message);
     }
   }
 
-  // Method 3: Check for already registered models (last resort)
+  // Method 3: Check existing mongoose models
   if (allModels.length === 0) {
     console.log(
       "[Mongeese] 🔄 Checking for already registered Mongoose models..."
@@ -362,12 +316,13 @@ export async function generateNestJSSnapshot(
     }
   }
 
-  // Final summary
   if (allModels.length === 0) {
     console.log(
       "[Mongeese] ❌ No NestJS models detected. Troubleshooting tips:"
     );
-    console.log("   • Ensure your schemas use @Schema() decorator");
+    console.log(
+      "   • Ensure your schemas use @Schema() decorator or SchemaFactory.createForClass"
+    );
     console.log(
       "   • Check that MongooseModule.forFeature() is used in modules"
     );

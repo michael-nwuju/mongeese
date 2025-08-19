@@ -3,21 +3,12 @@ import {
   CollectionStructure,
   FieldDefinition,
   SnapshotError,
+  DatabaseFieldInfo,
 } from "../types";
 import pLimit from "p-limit";
 import { flatten } from "../utilities/flatten";
 import { Collection, Document, Db } from "mongodb";
 import { createHash } from "crypto";
-import {
-  createFieldStats,
-  updateFieldStats,
-  inferFieldType,
-  inferRequired,
-  inferNullable,
-  inferDefault,
-  inferEnum,
-  FieldStats,
-} from "../utilities/detect-field-type";
 
 // Helper function to check if a document has nested objects that need flattening
 function hasNestedStructure(obj: any, depth: number = 0): boolean {
@@ -43,7 +34,10 @@ function hasNestedStructure(obj: any, depth: number = 0): boolean {
         value instanceof Date ||
         (value as any)._bsontype === "ObjectID" ||
         (value as any).$oid ||
-        Buffer.isBuffer(value)
+        Buffer.isBuffer(value) ||
+        (value as any)._bsontype === "Decimal128" ||
+        (value as any)._bsontype === "Long" ||
+        (value as any)._bsontype === "BinData"
       ) {
         continue;
       }
@@ -56,7 +50,11 @@ function hasNestedStructure(obj: any, depth: number = 0): boolean {
   return false;
 }
 
-async function snapCollection(
+/**
+ * Database-focused collection snapshotting for comparison purposes
+ * This focuses on field presence rather than accurate type detection
+ */
+async function snapCollectionForComparison(
   collections: { [collectionName: string]: CollectionStructure },
   collection: Collection<Document>,
   errors: SnapshotError[]
@@ -68,93 +66,82 @@ async function snapCollection(
 
     if (samples.length === 0) {
       // Empty collection, create minimal structure
-      collections[collection.collectionName] = {
+      return (collections[collection.collectionName] = {
         fields: {},
         indexes: [],
-      };
-      return;
+      });
     }
 
     const fields: { [fieldName: string]: FieldDefinition } = {};
+    const fieldInfo: { [fieldName: string]: DatabaseFieldInfo } = {};
 
-    const fieldStats: { [fieldName: string]: FieldStats } = {};
-
-    // Process all samples in one pass, tracking summary stats
+    // Process all samples to track field presence (not type accuracy)
     for (const doc of samples) {
       // Check if document contains nested objects that need flattening
       const hasNestedObjects = hasNestedStructure(doc);
 
+      let docFields: { [path: string]: any } = {};
+
       if (hasNestedObjects) {
-        // Only flatten if necessary
-        const flattened: { [path: string]: any } = {};
-
-        flatten(doc, "", flattened);
-
-        // Track all possible field paths from all documents
-        for (const path of Object.keys(flattened)) {
-          if (!fieldStats[path]) {
-            fieldStats[path] = createFieldStats();
-          }
-        }
-
-        // Update stats for this document's fields
-        for (const [path, value] of Object.entries(flattened)) {
-          updateFieldStats(fieldStats[path], value, true);
-        }
-
-        // Update stats for missing fields in this document
-        for (const [path, stats] of Object.entries(fieldStats)) {
-          if (!(path in flattened)) {
-            updateFieldStats(stats, undefined, false);
-          }
-        }
+        // Flatten nested documents
+        flatten(doc, "", docFields);
       } else {
-        // Process flat document directly without flattening
-        const docKeys = Object.keys(doc);
+        // Use document directly
+        docFields = doc;
+      }
 
-        // Track all possible field paths from all documents
-        for (const path of docKeys) {
-          if (!fieldStats[path]) {
-            fieldStats[path] = createFieldStats();
+      // Track all possible field paths from all documents
+      for (const path of Object.keys(docFields)) {
+        if (!fieldInfo[path]) {
+          fieldInfo[path] = {
+            exists: false,
+            hasNullValues: false,
+            hasUndefinedValues: false,
+            sampleCount: 0,
+            presentCount: 0,
+          };
+        }
+      }
+
+      // Update field presence info
+      for (const [path, info] of Object.entries(fieldInfo)) {
+        info.sampleCount++;
+
+        if (path in docFields) {
+          info.presentCount++;
+          info.exists = true;
+
+          const value = docFields[path];
+          if (value === null) {
+            info.hasNullValues = true;
           }
-        }
-
-        // Update stats for this document's fields
-        for (const [path, value] of Object.entries(doc)) {
-          updateFieldStats(fieldStats[path], value, true);
-        }
-
-        // Update stats for missing fields in this document
-        for (const [path, stats] of Object.entries(fieldStats)) {
-          if (!(path in doc)) {
-            updateFieldStats(stats, undefined, false);
+          if (value === undefined) {
+            info.hasUndefinedValues = true;
           }
         }
       }
     }
 
-    // Analyze each field using the collected stats
-    for (const [fieldName, stats] of Object.entries(fieldStats)) {
-      const type = inferFieldType(stats);
+    // Create basic field definitions focused on presence, not type accuracy
+    for (const [fieldName, info] of Object.entries(fieldInfo)) {
+      // For database comparison, we only care about:
+      // 1. Does the field exist in any documents?
+      // 2. Is it present in all documents (required-ish)?
+      // 3. Can it be null/undefined?
 
-      const required = inferRequired(stats);
+      const isRequiredInDb = info.presentCount === info.sampleCount;
 
-      const nullable = inferNullable(stats);
-
-      const defaultValue = inferDefault(stats);
-
-      const enumValues = type === "String" ? inferEnum(stats) : undefined;
+      const isNullableInDb = info.hasNullValues || info.hasUndefinedValues;
 
       fields[fieldName] = {
-        type,
-        nullable,
-        required,
-        ...(defaultValue !== undefined && { default: defaultValue }),
-        ...(enumValues && { enum: enumValues }),
+        type: "Mixed", // We don't care about accurate types for comparison
+        nullable: isNullableInDb,
+        required: isRequiredInDb,
+        // Don't add default values or enums - those come from code
       };
     }
 
-    // Get indexes
+    // Get indexes (this part stays accurate since it's metadata)
     const dbIndexes = await collection.indexes();
 
     const indexes = dbIndexes
@@ -221,15 +208,18 @@ export function generateSnapshotHash(snapshot: Snapshot): string {
 }
 
 /**
- * Generates a snapshot of the current schema structure for all collections in the DB.
+ * Generates a database snapshot optimized for comparison with code snapshots
+ * This focuses on field presence and database structure, not type accuracy
  * @param db MongoDB database connection
  * @param version Schema version number
  * @returns Promise<Snapshot>
  */
-export async function generateSnapshot(
+export async function generateDatabaseSnapshot(
   db: Db,
   version: number = 1
 ): Promise<Snapshot> {
+  console.log("[Mongeese] 📊 Generating database snapshot for comparison...");
+
   const dbCollections = await db.collections();
 
   // Exclude Mongeese's own collections
@@ -249,7 +239,7 @@ export async function generateSnapshot(
   if (filteredCollections.length > 50) {
     // Too many collections, process sequentially to avoid DB overload
     for (const collection of filteredCollections) {
-      await snapCollection(collections, collection, errors);
+      await snapCollectionForComparison(collections, collection, errors);
     }
   } else {
     // Use p-limit to control concurrency (limit to 5 at a time)
@@ -258,7 +248,7 @@ export async function generateSnapshot(
     await Promise.all(
       filteredCollections.map(collection =>
         limit(async () => {
-          await snapCollection(collections, collection, errors);
+          await snapCollectionForComparison(collections, collection, errors);
         })
       )
     );
@@ -266,9 +256,15 @@ export async function generateSnapshot(
 
   if (errors.length > 0) {
     console.warn(
-      `[Mongeese] Snapshot completed with ${errors.length} collection errors.`
+      `[Mongeese] Database snapshot completed with ${errors.length} collection errors.`
     );
   }
+
+  console.log(
+    `[Mongeese] ✅ Database snapshot generated for ${
+      Object.keys(collections).length
+    } collections`
+  );
 
   const snapshot: Snapshot = {
     version,
@@ -291,4 +287,15 @@ export async function generateSnapshot(
 export function verifySnapshot(snapshot: Snapshot): boolean {
   const computedHash = generateSnapshotHash(snapshot);
   return computedHash === snapshot.hash;
+}
+
+// Keep the legacy function for backward compatibility, but point to the new approach
+export async function generateSnapshot(
+  db: Db,
+  version: number = 1
+): Promise<Snapshot> {
+  // console.warn(
+  //   "[Mongeese] ⚠️  generateSnapshot is deprecated. Use generateDatabaseSnapshot for comparison or generateSnapshotFromCodebase for accurate schema detection."
+  // );
+  return generateDatabaseSnapshot(db, version);
 }

@@ -274,7 +274,13 @@ function extractFieldDefinition(
   const defaultValue = options.default;
 
   // Extract enum values for string fields
-  const enumValues = options.enum ? [...options.enum] : undefined;
+  const enumValues = options.enum
+    ? Array.isArray(options.enum)
+      ? [...options.enum]
+      : typeof options.enum === "object" && options.enum !== null
+      ? Object.values(options.enum)
+      : undefined
+    : undefined;
 
   // Extract validators
   const validators = schemaType.validators || [];

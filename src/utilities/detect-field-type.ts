@@ -1,19 +1,4 @@
-// Field summary statistics for efficient processing
-export interface FieldStats {
-  totalDocuments: number; // Total documents sampled
-
-  presentCount: number; // Documents where field exists (even if null/undefined)
-
-  nullCount: number; // Documents where field is explicitly null
-
-  undefinedCount: number; // Documents where field is explicitly undefined
-
-  typeSet: Set<string>; // Types of non-nullish values
-
-  valueSet: Set<string>; // For detecting defaults
-
-  stringValues: Set<string>; // For enum detection
-}
+import { FieldStats } from "../types";
 
 // Helper function to determine field type from sample data
 export function detectFieldType(value: any): string {
@@ -37,7 +22,8 @@ export function detectFieldType(value: any): string {
     }
 
     case "number": {
-      return "Number";
+      // Check if it's an integer or float
+      return Number.isInteger(value) ? "Number" : "Number";
     }
 
     case "object": {
@@ -53,7 +39,28 @@ export function detectFieldType(value: any): string {
         return "ObjectId";
       }
 
+      // Check for other BSON types
+      if (Buffer.isBuffer(value)) {
+        return "Buffer";
+      }
+
+      if (value._bsontype === "Decimal128") {
+        return "Decimal128";
+      }
+
+      if (value._bsontype === "Long") {
+        return "Long";
+      }
+
+      if (value._bsontype === "BinData") {
+        return "Binary";
+      }
+
       return "Object";
+    }
+
+    case "bigint": {
+      return "BigInt";
     }
 
     default: {
@@ -71,7 +78,6 @@ export function createFieldStats(): FieldStats {
     undefinedCount: 0,
     typeSet: new Set<string>(),
     valueSet: new Set<string>(),
-    stringValues: new Set<string>(),
   };
 }
 
@@ -107,13 +113,15 @@ export function updateFieldStats(
   const type = detectFieldType(value);
   stats.typeSet.add(type);
 
-  // Track value for default detection
-  const valueStr = JSON.stringify(value);
-  stats.valueSet.add(valueStr);
-
-  // Track string values for enum detection
-  if (typeof value === "string") {
-    stats.stringValues.add(value);
+  // Track value for default detection (but be careful with large objects)
+  try {
+    const valueStr = JSON.stringify(value);
+    // Only store small values to avoid memory issues
+    if (valueStr.length < 1000) {
+      stats.valueSet.add(valueStr);
+    }
+  } catch (error) {
+    // Ignore circular references or other serialization issues
   }
 }
 
@@ -125,14 +133,32 @@ export function inferFieldType(stats: FieldStats): string {
   const nonNullTypes = types.filter(t => t !== "Null" && t !== "Undefined");
 
   if (nonNullTypes.length === 0) {
-    return "Unknown"; // Only null/undefined values or missing fields
+    return "Mixed"; // Only null/undefined values or missing fields
   }
 
   if (nonNullTypes.length === 1) {
     return nonNullTypes[0];
   }
 
-  // Multiple types detected
+  // Handle common type combinations
+  if (nonNullTypes.length === 2) {
+    const typeSet = new Set(nonNullTypes);
+
+    // Number variations should be treated as Number
+    if (
+      typeSet.has("Number") &&
+      (typeSet.has("Long") || typeSet.has("Decimal128"))
+    ) {
+      return "Number";
+    }
+
+    // String variations
+    if (typeSet.has("String") && typeSet.has("ObjectId")) {
+      return "Mixed"; // Could be either string or ObjectId
+    }
+  }
+
+  // Multiple types detected - this is a mixed field
   return "Mixed";
 }
 
@@ -150,24 +176,18 @@ export function inferNullable(stats: FieldStats): boolean {
 
 // Infer default value from stats
 export function inferDefault(stats: FieldStats): any {
-  if (stats.valueSet.size === 1) {
+  // Only infer default if all present values are the same
+  if (stats.valueSet.size === 1 && stats.presentCount > 1) {
     const valueStr = Array.from(stats.valueSet)[0];
-    return JSON.parse(valueStr);
+    try {
+      return JSON.parse(valueStr);
+    } catch {
+      return undefined;
+    }
   }
   return undefined;
 }
 
-// #TODO: Not strong enough, needs more work
-// Infer enum values from stats
-export function inferEnum(stats: FieldStats): string[] | undefined {
-  if (stats.stringValues.size === 0) {
-    return undefined;
-  }
-
-  const uniqueValues = Array.from(stats.stringValues);
-  if (uniqueValues.length <= 10 && uniqueValues.length > 1) {
-    return uniqueValues.sort();
-  }
-
-  return undefined;
-}
+// Remove inferEnum function entirely - enums should be inferred from code, not database
+// Database sampling cannot reliably determine if a string field should be an enum
+// This should be handled at the code analysis level, not database inspection level
