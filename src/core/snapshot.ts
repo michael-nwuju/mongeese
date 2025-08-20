@@ -10,6 +10,9 @@ import { flatten } from "../utilities/flatten";
 import { Collection, Document, Db } from "mongodb";
 import { createHash } from "crypto";
 
+// Fields that Mongoose manages automatically and should be filtered out
+const MONGOOSE_MANAGED_FIELDS = new Set(["_id", "__v"]);
+
 // Helper function to check if a document has nested objects that need flattening
 function hasNestedStructure(obj: any, depth: number = 0): boolean {
   if (depth > 3) return false; // Limit recursion depth
@@ -52,7 +55,7 @@ function hasNestedStructure(obj: any, depth: number = 0): boolean {
 
 /**
  * Database-focused collection snapshotting for comparison purposes
- * This focuses on field presence rather than accurate type detection
+ * Filters out Mongoose-managed fields and focuses on field presence
  */
 async function snapCollectionForComparison(
   collections: { [collectionName: string]: CollectionStructure },
@@ -66,10 +69,11 @@ async function snapCollectionForComparison(
 
     if (samples.length === 0) {
       // Empty collection, create minimal structure
-      return (collections[collection.collectionName] = {
+      collections[collection.collectionName] = {
         fields: {},
         indexes: [],
-      });
+      };
+      return;
     }
 
     const fields: { [fieldName: string]: FieldDefinition } = {};
@@ -90,8 +94,15 @@ async function snapCollectionForComparison(
         docFields = doc;
       }
 
-      // Track all possible field paths from all documents
-      for (const path of Object.keys(docFields)) {
+      // Filter out Mongoose-managed fields
+      const filteredFields = Object.fromEntries(
+        Object.entries(docFields).filter(
+          ([fieldName]) => !MONGOOSE_MANAGED_FIELDS.has(fieldName)
+        )
+      );
+
+      // Track all possible field paths from all documents (excluding Mongoose fields)
+      for (const path of Object.keys(filteredFields)) {
         if (!fieldInfo[path]) {
           fieldInfo[path] = {
             exists: false,
@@ -107,11 +118,11 @@ async function snapCollectionForComparison(
       for (const [path, info] of Object.entries(fieldInfo)) {
         info.sampleCount++;
 
-        if (path in docFields) {
+        if (path in filteredFields) {
           info.presentCount++;
           info.exists = true;
 
-          const value = docFields[path];
+          const value = filteredFields[path];
           if (value === null) {
             info.hasNullValues = true;
           }
@@ -130,7 +141,6 @@ async function snapCollectionForComparison(
       // 3. Can it be null/undefined?
 
       const isRequiredInDb = info.presentCount === info.sampleCount;
-
       const isNullableInDb = info.hasNullValues || info.hasUndefinedValues;
 
       fields[fieldName] = {
@@ -156,6 +166,12 @@ async function snapCollectionForComparison(
       }));
 
     collections[collection.collectionName] = { fields, indexes };
+
+    console.log(
+      `   📊 Collection '${collection.collectionName}': ${
+        Object.keys(fields).length
+      } fields detected (Mongoose fields filtered)`
+    );
   } catch (error) {
     errors.push({ collection: collection.collectionName, error });
 
@@ -166,7 +182,7 @@ async function snapCollectionForComparison(
   }
 }
 
-// Deterministic serialization for hashing
+// Keep the same serialization and hashing functions
 function serializeSnapshot(snapshot: Snapshot): string {
   const { _id, hash, createdAt, ...content } = snapshot;
 
@@ -200,16 +216,14 @@ function serializeSnapshot(snapshot: Snapshot): string {
   );
 }
 
-// Generate SHA256 hash of snapshot content
 export function generateSnapshotHash(snapshot: Snapshot): string {
   const serialized = serializeSnapshot(snapshot);
-
   return createHash("sha256").update(serialized).digest("hex");
 }
 
 /**
  * Generates a database snapshot optimized for comparison with code snapshots
- * This focuses on field presence and database structure, not type accuracy
+ * Automatically filters out Mongoose-managed fields (_id, __v)
  * @param db MongoDB database connection
  * @param version Schema version number
  * @returns Promise<Snapshot>
@@ -259,12 +273,6 @@ export async function generateDatabaseSnapshot(
       `[Mongeese] Database snapshot completed with ${errors.length} collection errors.`
     );
   }
-
-  console.log(
-    `[Mongeese] ✅ Database snapshot generated for ${
-      Object.keys(collections).length
-    } collections`
-  );
 
   const snapshot: Snapshot = {
     version,

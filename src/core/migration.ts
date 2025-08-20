@@ -188,93 +188,101 @@ export async function applyMigrations(
   db: DbWithClient,
   options: MigrateOptions
 ): Promise<void> {
-  const appliedMigrations = await getAppliedMigrations(db);
+  try {
+    const appliedMigrations = await getAppliedMigrations(db);
 
-  const appliedFilenames = appliedMigrations.map(m => m.filename);
+    const appliedFilenames = appliedMigrations.map(m => m.filename);
 
-  let pendingMigrations = await getPendingMigrations(appliedFilenames);
+    let pendingMigrations = await getPendingMigrations(appliedFilenames);
 
-  if (options.target) {
-    // Filter to only migrations up to the target
-    const targetIndex = pendingMigrations.findIndex(
-      m => m.filename === options.target || m.timestamp === options.target
-    );
-
-    if (targetIndex === -1) {
-      throw new Error(`Target migration not found: ${options.target}`);
-    }
-
-    pendingMigrations = pendingMigrations.slice(0, targetIndex + 1);
-  }
-
-  if (pendingMigrations.length === 0) {
-    return console.log(chalk.green("✅ No pending migrations to apply."));
-  }
-
-  console.log(
-    chalk.cyan(`\n📋 Found ${pendingMigrations.length} pending migration(s):`)
-  );
-
-  if (options.dry) {
-    console.log(chalk.yellow("\n🔍 DRY RUN - No changes will be made\n"));
-  }
-
-  // Validate all migrations first
-  console.log(chalk.cyan("🔍 Validating migrations..."));
-
-  for (const migration of pendingMigrations) {
-    const validation = await validateMigrationFile(migration);
-
-    if (!validation.valid) {
-      console.error(chalk.red(`❌ Invalid migration ${migration.filename}:`));
-
-      validation.errors.forEach(error =>
-        console.error(chalk.red(`   • ${error}`))
+    if (options.target) {
+      // Filter to only migrations up to the target
+      const targetIndex = pendingMigrations.findIndex(
+        m => m.filename === options.target || m.timestamp === options.target
       );
 
-      throw new Error("Migration validation failed");
-    }
-
-    if (validation.warnings.length > 0) {
-      console.warn(chalk.yellow(`⚠️  Warnings for ${migration.filename}:`));
-
-      validation.warnings.forEach(warning =>
-        console.warn(chalk.yellow(`   • ${warning}`))
-      );
-    }
-  }
-
-  console.log(chalk.green("✅ All migrations validated"));
-
-  // Execute migrations in order
-  let successCount = 0;
-
-  for (const migration of pendingMigrations) {
-    try {
-      await executeMigration(db, migration, "up", options);
-      successCount++;
-    } catch (error) {
-      console.error(chalk.red(`\n❌ Migration failed: ${migration.filename}`));
-
-      if (successCount > 0) {
-        console.log(
-          chalk.yellow(
-            `\n⚠️  ${successCount} migration(s) were applied successfully before the failure.`
-          )
-        );
-
-        console.log(
-          chalk.yellow('   Use "mongeese migrate down" to rollback if needed.')
-        );
+      if (targetIndex === -1) {
+        throw new Error(`Target migration not found: ${options.target}`);
       }
 
-      throw error;
+      pendingMigrations = pendingMigrations.slice(0, targetIndex + 1);
     }
-  }
 
-  console.log(
-    chalk.green(`\n🎉 Successfully applied ${successCount} migration(s)!`)
-  );
+    if (pendingMigrations.length === 0) {
+      return console.log(chalk.green("✅ No pending migrations to apply."));
+    }
+
+    console.log(
+      chalk.cyan(`\n📋 Found ${pendingMigrations.length} pending migration(s):`)
+    );
+
+    if (options.dry) {
+      console.log(chalk.yellow("\n🔍 DRY RUN - No changes will be made\n"));
+    }
+
+    // Validate all migrations first
+    console.log(chalk.cyan("🔍 Validating migrations..."));
+
+    for (const migration of pendingMigrations) {
+      const validation = await validateMigrationFile(migration);
+
+      if (!validation.valid) {
+        console.error(chalk.red(`❌ Invalid migration ${migration.filename}:`));
+
+        validation.errors.forEach(error =>
+          console.error(chalk.red(`   • ${error}`))
+        );
+
+        throw new Error("Migration validation failed");
+      }
+
+      if (validation.warnings.length > 0) {
+        console.warn(chalk.yellow(`⚠️  Warnings for ${migration.filename}:`));
+
+        validation.warnings.forEach(warning =>
+          console.warn(chalk.yellow(`   • ${warning}`))
+        );
+      }
+    }
+
+    console.log(chalk.green("✅ All migrations validated"));
+
+    // Execute migrations in order
+    let successCount = 0;
+
+    for (const migration of pendingMigrations) {
+      try {
+        await executeMigration(db, migration, "up", options);
+        successCount++;
+      } catch (error) {
+        console.error(
+          chalk.red(`\n❌ Migration failed: ${migration.filename}`)
+        );
+
+        if (successCount > 0) {
+          console.log(
+            chalk.yellow(
+              `\n⚠️  ${successCount} migration(s) were applied successfully before the failure.`
+            )
+          );
+
+          console.log(
+            chalk.yellow(
+              '   Use "mongeese migrate down" to rollback if needed.'
+            )
+          );
+        }
+
+        throw error;
+      }
+    }
+
+    console.log(
+      chalk.green(`\n🎉 Successfully applied ${successCount} migration(s)!`)
+    );
+  } catch (error) {
+    throw error;
+  }
 }
 
 /**
