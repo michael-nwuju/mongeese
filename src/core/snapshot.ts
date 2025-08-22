@@ -182,7 +182,7 @@ async function snapCollectionForComparison(
   }
 }
 
-// Keep the same serialization and hashing functions
+// Keep the same serialization and hashing functions for in-memory snapshots
 function serializeSnapshot(snapshot: Snapshot): string {
   const { _id, hash, createdAt, ...content } = snapshot;
 
@@ -239,7 +239,7 @@ export async function generateDatabaseSnapshot(
   // Exclude Mongeese's own collections
   const filteredCollections = dbCollections.filter(
     c =>
-      c.collectionName !== "mongeese.snapshots" &&
+      c.collectionName !== "mongeese.snapshots" && // Keep this filter even though we don't store snapshots anymore
       c.collectionName !== "mongeese.migrations"
   );
 

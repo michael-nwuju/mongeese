@@ -66,25 +66,25 @@ export type SnapshotCollections = {
   [collectionName: string]: CollectionStructure;
 };
 
-// Canonical snapshot format for storage
+// Snapshot format for in-memory comparison (no longer stored in database)
 export interface Snapshot {
-  _id?: ObjectId;
+  _id?: ObjectId; // Optional for backward compatibility
   createdAt: Date;
   hash: string; // SHA256 hash of deterministically serialized snapshot
   version: number; // Schema version for evolution
   collections: SnapshotCollections;
 }
 
-// Migration format for storage
+// Migration format for storage (updated to remove snapshot references)
 export interface Migration {
   _id?: ObjectId;
   name: string; // e.g., "2025_08_02_add_user_age"
   from: {
-    _id: ObjectId; // DB reference
+    _id?: ObjectId; // No longer used but kept for backward compatibility
     hash: string; // SHA256 of snapshot content
   };
   to: {
-    _id: ObjectId;
+    _id?: ObjectId; // No longer used but kept for backward compatibility
     hash: string;
   };
   up: string[]; // Array of Mongo shell commands
@@ -93,6 +93,7 @@ export interface Migration {
   isApplied?: boolean;
   appliedAt?: Date | null;
   executionTime?: number | null;
+  filename?: string; // Migration filename for tracking
 }
 
 export type SnapshotError = { collection: string; error: any };
@@ -178,6 +179,7 @@ export interface MongooseFieldInfo extends FieldDefinition {
   transform?: boolean;
   virtual?: boolean;
 }
+
 export interface ModelDetectionConfig {
   modelPaths?: string[];
   require?: boolean;
@@ -202,7 +204,7 @@ export interface ModelDetectionConfig {
   };
 }
 
-// You might also want to add a configuration file interface
+// Configuration file interface
 export interface MongeesConfig {
   // Database connection
   database?: {
@@ -234,7 +236,6 @@ export interface FieldStats {
   undefinedCount: number; // Documents where field is explicitly undefined
   typeSet: Set<string>; // Types of non-nullish values
   valueSet: Set<string>; // For detecting defaults
-  // Remove stringValues since we're not inferring enums anymore
 }
 
 // Simplified field detection for database comparison
