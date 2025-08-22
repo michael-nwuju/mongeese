@@ -33,13 +33,13 @@
   "dependencies": {
     "@nestjs/common": "^11.1.6",
     "@nestjs/mongoose": "^11.0.3",
-    "chalk": "^5.4.1",
+    "chalk": "4.1.2",
     "commander": "^14.0.0",
     "fs-extra": "^11.3.0",
     "glob": "^11.0.3",
     "lodash": "^4.17.21",
     "mongoose": "^8.16.1",
-    "p-limit": "^6.2.0"
+    "p-limit": "3.1.0"
   },
   "bin": {
     "mongeese": "dist/bin/mongeese.js"
@@ -55,6 +55,10 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "resolutions": {
+    "chalk": "4.1.2",
+    "p-limit": "3.1.0"
   },
   "files": [
     "dist/**/*",
