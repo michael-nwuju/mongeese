@@ -1,20 +1,14 @@
 import { Db, Collection, Filter, WithId } from "mongodb";
-import { Snapshot, Migration } from "../types";
-import { generateSnapshot, verifySnapshot } from "./snapshot";
-import { diffSnapshots } from "./diff";
+import { Migration } from "../types";
 import { ClientSession } from "mongoose";
 
 export class MigrationStore {
   private db: Db;
 
-  private snapshots: Collection<Snapshot>;
-
   private migrations: Collection<Migration>;
 
   constructor(db: Db) {
     this.db = db;
-
-    this.snapshots = db.collection("mongeese.snapshots");
 
     this.migrations = db.collection("mongeese.migrations");
   }
@@ -29,23 +23,7 @@ export class MigrationStore {
 
       const collectionNames = collections.map(c => c.name);
 
-      const hasSnapshotsCollection =
-        collectionNames.includes("mongeese.snapshots");
-
-      const hasMigrationsCollection = collectionNames.includes(
-        "mongeese.migrations"
-      );
-
-      if (!hasSnapshotsCollection || !hasMigrationsCollection) {
-        return false;
-      }
-
-      // Check if the snapshots collection has the required indexes
-      const snapshotsIndexes = await this.snapshots.listIndexes().toArray();
-
-      const hasHashIndex = snapshotsIndexes.some(idx => idx.name === "hash_1");
-
-      return hasHashIndex;
+      return collectionNames.includes("mongeese.migrations");
     } catch {
       // If any error occurs, consider not initialized
       return false;
@@ -61,13 +39,8 @@ export class MigrationStore {
       return;
     }
 
-    // Create indexes for snapshots collection
-    await this.snapshots.createIndex({ hash: 1 }, { unique: true });
-    await this.snapshots.createIndex({ version: -1 });
-    await this.snapshots.createIndex({ createdAt: -1 });
-
     // Create indexes for migrations collection
-    await this.migrations.createIndex({ id: 1 }, { unique: true });
+    await this.migrations.createIndex({ filename: 1 }, { unique: true });
 
     await this.migrations.createIndex({ "from.hash": 1 });
 
@@ -76,115 +49,30 @@ export class MigrationStore {
     await this.migrations.createIndex({ createdAt: -1 });
   }
 
-  // ===== SNAPSHOT METHODS =====
-
-  /**
-   * Generate and store a new snapshot
-   */
-  async generateAndStoreSnapshot(version?: number): Promise<Snapshot> {
-    return await this.storeSnapshot(await generateSnapshot(this.db, version));
-  }
-
-  /**
-   * Store a snapshot in the format
-   */
-  async storeSnapshot(snapshot: Snapshot): Promise<Snapshot> {
-    // Verify the snapshot hash before storing
-    if (!verifySnapshot(snapshot)) {
-      throw new Error("Snapshot hash verification failed");
-    }
-
-    // Check if snapshot with this hash already exists
-    const existing = await this.snapshots.findOne({ hash: snapshot.hash });
-
-    if (existing) {
-      return existing;
-    }
-
-    const result = await this.snapshots.insertOne(snapshot);
-
-    snapshot._id = result.insertedId;
-
-    return snapshot;
-  }
-
-  /**
-   * Get a snapshot by hash
-   */
-  async getSnapshotByHash(hash: string): Promise<Snapshot | null> {
-    return await this.snapshots.findOne({ hash });
-  }
-
-  /**
-   * Get a snapshot by ID
-   */
-  async getSnapshotById(id: string): Promise<Snapshot | null> {
-    const { ObjectId } = await import("mongodb");
-    return await this.snapshots.findOne({ _id: new ObjectId(id) });
-  }
-
-  /**
-   * Get the latest snapshot
-   */
-  async getLatestSnapshot(): Promise<Snapshot | null> {
-    return await this.snapshots.find({}).sort({ version: -1 }).limit(1).next();
-  }
-
-  /**
-   * Get all snapshots
-   */
-  async getAllSnapshots(): Promise<Snapshot[]> {
-    return await this.snapshots.find({}).sort({ version: -1 }).toArray();
-  }
-
-  /**
-   * Verify all stored snapshots
-   */
-  async verifyAllSnapshots(): Promise<{
-    valid: Snapshot[];
-    invalid: Snapshot[];
-  }> {
-    const snapshots = await this.getAllSnapshots();
-
-    const valid: Snapshot[] = [];
-
-    const invalid: Snapshot[] = [];
-
-    for (const snapshot of snapshots) {
-      if (verifySnapshot(snapshot)) {
-        valid.push(snapshot);
-      } else {
-        invalid.push(snapshot);
-      }
-    }
-
-    return { valid, invalid };
-  }
-
   // ===== MIGRATION METHODS =====
 
   /**
-   * Create a migration between two snapshots
+   * Create a migration record
    */
   async createMigration(
-    from: Snapshot,
-    to: Snapshot,
-    migrationId: string
+    migrationId: string,
+    fromHash: string,
+    toHash: string,
+    upCommands: string[],
+    downCommands: string[]
   ): Promise<Migration> {
-    const { up, down } = diffSnapshots(from, to);
-
     const migration: Migration = {
       name: migrationId,
       from: {
-        _id: from._id!,
-        hash: from.hash,
+        _id: undefined!, // No longer storing snapshot references
+        hash: fromHash,
       },
       to: {
-        _id: to._id!,
-        hash: to.hash,
+        _id: undefined!, // No longer storing snapshot references
+        hash: toHash,
       },
-      up: up.map(cmd => cmd.command),
-      down: down.map(cmd => cmd.command),
+      up: upCommands,
+      down: downCommands,
       createdAt: new Date(),
     };
 
@@ -228,6 +116,26 @@ export class MigrationStore {
   }
 
   /**
+   * Extract date from file name
+   */
+  private dateFromFilename(filename: string): Date {
+    const match = filename.match(
+      /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/
+    );
+    if (!match) throw new Error("Invalid filename format");
+
+    const [_, year, month, day, hour, minute, second] = match;
+    return new Date(
+      Number(year),
+      Number(month) - 1, // JS months are 0-based
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    );
+  }
+
+  /**
    * Mark a migration as applied or not applied
    */
   async setMigrationApplied(
@@ -243,6 +151,7 @@ export class MigrationStore {
           isApplied,
           appliedAt: isApplied ? new Date() : null,
           executionTime,
+          createdAt: this.dateFromFilename(filename),
         },
       },
       { upsert: true, session }
