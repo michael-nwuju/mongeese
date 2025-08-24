@@ -29,6 +29,10 @@ export function normalizeSnapshot(snapshot: Snapshot): NormalizedSnapshot {
       indexes: [],
     };
 
+    if (collection.isEmpty) {
+      normalizedCollection.isEmpty = collection.isEmpty;
+    }
+
     // Filter out Mongoose-managed fields during normalization
     const sortedFieldNames = Object.keys(collection.fields)
       .filter(fieldName => !MONGOOSE_MANAGED_FIELDS.has(fieldName))
@@ -51,15 +55,25 @@ export function normalizeSnapshot(snapshot: Snapshot): NormalizedSnapshot {
 }
 
 function normalizeIndex(index: any): IndexDefinition {
+  // Handle both database index format and schema index format
+  const fields = Array.isArray(index.fields)
+    ? index.fields.map((f: any) =>
+        typeof f === "string" ? { field: f, direction: 1 } : f
+      )
+    : index.key
+    ? // Database index format (from db.collection.getIndexes())
+      Object.entries(index.key).map(([field, direction]) => ({
+        field,
+        direction: direction as 1 | -1,
+      }))
+    : // Schema index format
+      Object.entries(index.fields || {}).map(([field, direction]) => ({
+        field,
+        direction: direction as 1 | -1,
+      }));
+
   return {
-    fields: Array.isArray(index.fields)
-      ? index.fields.map((f: any) =>
-          typeof f === "string" ? { field: f, direction: 1 } : f
-        )
-      : Object.entries(index.fields || {}).map(([field, direction]) => ({
-          field,
-          direction: direction as 1 | -1,
-        })),
+    fields,
     unique: index.unique || false,
     sparse: index.sparse || false,
     partialFilterExpression: index.partialFilterExpression,
@@ -158,11 +172,16 @@ function compareFields(
 function diffFieldsRefined(
   collectionName: string,
   dbFields: { [name: string]: FieldDefinition }, // Database snapshot (comparison only)
-  codeFields: { [name: string]: FieldDefinition } // Code snapshot (source of truth)
+  codeFields: { [name: string]: FieldDefinition }, // Code snapshot (source of truth)
+  isDbCollectionEmpty = false
 ): { up: MigrationCommand[]; down: MigrationCommand[]; warnings: string[] } {
   const up: MigrationCommand[] = [];
   const down: MigrationCommand[] = [];
   const warnings: string[] = [];
+
+  if (isDbCollectionEmpty) {
+    return { up, down, warnings };
+  }
 
   // Filter out Mongoose-managed fields from both snapshots
   const filteredDbFields = Object.fromEntries(
@@ -183,10 +202,6 @@ function diffFieldsRefined(
   for (const fieldName of codeFieldNames) {
     if (!dbFieldNames.has(fieldName)) {
       const codeField = filteredCodeFields[fieldName];
-
-      console.log(
-        `   ➕ New field detected: '${fieldName}' (${codeField.type})`
-      );
 
       // Smart default value handling
       let migrationValue: any = null;
@@ -262,8 +277,6 @@ function diffFieldsRefined(
   // REMOVED FIELDS: In database but not in code (excluding Mongoose managed fields)
   for (const fieldName of dbFieldNames) {
     if (!codeFieldNames.has(fieldName)) {
-      console.log(`   ➖ Removed field detected: '${fieldName}'`);
-
       const dbField = filteredDbFields[fieldName];
 
       up.push({
@@ -424,6 +437,20 @@ function diffCollections(
   return { up, down, warnings };
 }
 
+// Enhanced index signature that accounts for all relevant properties
+function indexSignature(index: IndexDefinition): string {
+  const normalized = {
+    fields: index.fields.map(f => ({ field: f.field, direction: f.direction })),
+    unique: index.unique || false,
+    sparse: index.sparse || false,
+    expireAfterSeconds: index.expireAfterSeconds,
+    partialFilterExpression: index.partialFilterExpression,
+    text: index.text || false,
+  };
+
+  return JSON.stringify(normalized, Object.keys(normalized).sort());
+}
+
 // Simplified index diffing (keep existing logic but make it cleaner)
 function diffIndexes(
   collectionName: string,
@@ -434,32 +461,48 @@ function diffIndexes(
   const down: MigrationCommand[] = [];
   const warnings: string[] = [];
 
-  // Compare indexes by their normalized structure
-  function indexSignature(index: IndexDefinition): string {
-    const normalized = normalizeIndex(index);
-    return JSON.stringify(normalized);
-  }
+  // Create signature maps for easier comparison
+  const fromSignatureMap = new Map<string, IndexDefinition>();
+  const toSignatureMap = new Map<string, IndexDefinition>();
 
-  const fromSignatures = fromIndexes.map(indexSignature);
-  const toSignatures = toIndexes.map(indexSignature);
+  fromIndexes.forEach(index => {
+    fromSignatureMap.set(indexSignature(index), index);
+  });
 
-  // Added indexes
-  toIndexes.forEach((toIndex, i) => {
-    if (!fromSignatures.includes(toSignatures[i])) {
+  toIndexes.forEach(index => {
+    toSignatureMap.set(indexSignature(index), index);
+  });
+
+  const fromSignatures = Array.from(fromSignatureMap.keys());
+  const toSignatures = Array.from(toSignatureMap.keys());
+
+  // Added indexes (in code but not in database)
+  for (const signature of toSignatures) {
+    if (!fromSignatures.includes(signature)) {
+      const toIndex = toSignatureMap.get(signature)!;
       const fields = toIndex.fields
         .map(f => `${f.field}: ${f.direction}`)
         .join(", ");
 
+      let description = `Create index on ${fields} for collection '${collectionName}'`;
+
+      // Add TTL info to description
+      if (toIndex.expireAfterSeconds !== undefined) {
+        description += ` (TTL: ${toIndex.expireAfterSeconds}s)`;
+      }
+
       up.push({
         command: generateIndexCommand(collectionName, toIndex),
-        description: `Create index on ${fields} for collection '${collectionName}'`,
+        description,
         safetyLevel: "safe",
-        metadata: { index: toIndex },
+        metadata: {
+          index: toIndex,
+          indexType:
+            toIndex.expireAfterSeconds !== undefined ? "ttl" : "regular",
+        },
       });
 
-      const indexName =
-        toIndex.name || toIndex.fields.map(f => f.field).join("_");
-
+      const indexName = generateIndexName(toIndex);
       down.push({
         command: `db.collection("${collectionName}").dropIndex("${indexName}")`,
         description: `Drop index '${indexName}' from collection '${collectionName}'`,
@@ -467,19 +510,34 @@ function diffIndexes(
         metadata: { indexName, index: toIndex },
       });
     }
-  });
+  }
 
-  // Removed indexes
-  fromIndexes.forEach((fromIndex, i) => {
-    if (!toSignatures.includes(fromSignatures[i])) {
-      const indexName =
-        fromIndex.name || fromIndex.fields.map(f => f.field).join("_");
+  // Removed indexes (in database but not in code)
+  for (const signature of fromSignatures) {
+    if (!toSignatures.includes(signature)) {
+      const fromIndex = fromSignatureMap.get(signature)!;
+      const indexName = generateIndexName(fromIndex);
+
+      let description = `Drop index '${indexName}' from collection '${collectionName}'`;
+
+      // Add TTL info to description
+      if (fromIndex.expireAfterSeconds !== undefined) {
+        description += ` (TTL index)`;
+        warnings.push(
+          `⚠️  TTL index '${indexName}' on '${collectionName}' will be dropped. Ensure this is intended.`
+        );
+      }
 
       up.push({
         command: `db.collection("${collectionName}").dropIndex("${indexName}")`,
-        description: `Drop index '${indexName}' from collection '${collectionName}'`,
+        description,
         safetyLevel: "warning",
-        metadata: { indexName, index: fromIndex },
+        metadata: {
+          indexName,
+          index: fromIndex,
+          indexType:
+            fromIndex.expireAfterSeconds !== undefined ? "ttl" : "regular",
+        },
       });
 
       down.push({
@@ -488,14 +546,40 @@ function diffIndexes(
         safetyLevel: "safe",
         metadata: { index: fromIndex },
       });
-
-      warnings.push(
-        `⚠️  Will drop index '${indexName}' from '${collectionName}'`
-      );
     }
-  });
+  }
 
   return { up, down, warnings };
+}
+
+function generateIndexName(index: IndexDefinition): string {
+  if (index.name) {
+    return index.name;
+  }
+
+  // Generate name from fields
+  const fieldNames = index.fields
+    .map(f => {
+      if (f.direction === 1) {
+        return f.field;
+      } else {
+        return `${f.field}_-1`;
+      }
+    })
+    .join("_");
+
+  // Add suffix for special index types
+  if (index.expireAfterSeconds !== undefined) {
+    return `${fieldNames}_ttl`;
+  }
+  if (index.text) {
+    return `${fieldNames}_text`;
+  }
+  if (index.unique) {
+    return `${fieldNames}_unique`;
+  }
+
+  return fieldNames;
 }
 
 function generateIndexCommand(
@@ -520,7 +604,9 @@ function generateIndexCommand(
   if (index.expireAfterSeconds !== undefined) {
     options.push(`expireAfterSeconds: ${index.expireAfterSeconds}`);
   }
-  if (index.name) options.push(`name: "${index.name}"`);
+  if (index.name) {
+    options.push(`name: "${index.name}"`);
+  }
 
   const optionsStr = options.length > 0 ? `, { ${options.join(", ")} }` : "";
 
@@ -552,7 +638,7 @@ function injectSessionIntoCommand(command: string): string {
         return command.replace(
           /db\.collection\("([^"]+)"\)\.drop\(\)/,
           `// WARNING: Execute manually outside or delete from your MongoDB Database: db.collection("$1").drop()
-           // This operation is irreversible and cannot run within a transaction`
+    // This operation is irreversible and cannot run within a transaction`
         );
       }
 
@@ -585,7 +671,8 @@ function injectSessionIntoCommand(command: string): string {
         // dropIndex cannot run in transactions - require manual execution
         return command.replace(
           /db\.collection\("([^"]+)"\)\.dropIndex\("([^"]+)"\)/,
-          '// WARNING: Execute manually outside or delete from your MongoDB Database: db.collection("$1").dropIndex("$2")\n// Index drops cannot run within a transaction'
+          `// WARNING: Execute manually outside or delete from your MongoDB Database: db.collection("$1").dropIndex("$2")
+    // Index drops cannot run within a transaction`
         );
       }
 
@@ -652,16 +739,16 @@ export function diffSnapshots(
   codeSnapshot: Snapshot // Code state (source of truth)
 ): DiffResult {
   console.log("\n[Mongeese] 🔄 Starting diff analysis...");
-  console.log(
-    `   📊 Database snapshot: ${
-      Object.keys(dbSnapshot.collections).length
-    } collections`
-  );
-  console.log(
-    `   💻 Code snapshot: ${
-      Object.keys(codeSnapshot.collections).length
-    } collections`
-  );
+  // console.log(
+  //   `   📊 Database snapshot: ${
+  //     Object.keys(dbSnapshot.collections).length
+  //   } collections`
+  // );
+  // console.log(
+  //   `   💻 Code snapshot: ${
+  //     Object.keys(codeSnapshot.collections).length
+  //   } collections`
+  // );
 
   const normalizedDb = normalizeSnapshot(dbSnapshot);
   const normalizedCode = normalizeSnapshot(codeSnapshot);
@@ -717,7 +804,8 @@ export function diffSnapshots(
       const fieldDiff = diffFieldsRefined(
         collectionName,
         dbCollection.fields, // Database state
-        codeCollection.fields // Code state (truth)
+        codeCollection.fields, // Code state (truth)
+        dbCollection.isEmpty
       );
 
       if (fieldDiff.up.length > 0 || fieldDiff.down.length > 0) {

@@ -247,9 +247,10 @@ export class NestJSModelDetector {
 export async function generateNestJSSnapshot(
   config: ModelDetectionConfig = {}
 ) {
-  console.log("[Mongeese] 🔍 Using enhanced NestJS model detection...");
   let allModels: Model<any>[] = [];
+
   const errors: any[] = [];
+
   let detectionMethod = "none";
 
   // Method 1: Bootstrap NestJS app
@@ -262,7 +263,7 @@ export async function generateNestJSSnapshot(
       allModels.push(...bootstrapModels);
       detectionMethod = "bootstrap";
       console.log(
-        `[Mongeese] ✅ Bootstrap successful: ${bootstrapModels.length} models found`
+        `\n[Mongeese] ✅ Bootstrap successful: ${bootstrapModels.length} models found`
       );
     } else {
       console.log("[Mongeese] ⚠️ Bootstrap completed but no models found");

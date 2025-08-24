@@ -3,7 +3,7 @@ import { GenerateMigrationOptions } from "../types";
 import { getDatabase } from "../utilities/get-database";
 import { generateMigrationPreview } from "../core/generate";
 import { generateSnapshotFromCodebase } from "../core/detection";
-import { generateDatabaseSnapshot } from "../core/snapshot";
+import { generateSnapshot } from "../core/snapshot";
 import { diffSnapshots } from "../core/diff";
 import { MigrationStore } from "../core/store";
 
@@ -27,7 +27,7 @@ export default async function generate(
     // Generate snapshots on-demand (no storage)
     const { snapshot: codeSnapshot } = await generateSnapshotFromCodebase();
 
-    const databaseSnapshot = await generateDatabaseSnapshot(db, 1);
+    const databaseSnapshot = await generateSnapshot(db, 1);
 
     const diffResult = diffSnapshots(databaseSnapshot, codeSnapshot);
 
@@ -47,7 +47,7 @@ export default async function generate(
     }
 
     // Show detected changes summary
-    console.log(chalk.green("✅ Detected changes:"));
+    console.log(chalk.green("\n✅ Detected changes:"));
 
     const { metadata } = diffResult;
 
@@ -77,25 +77,25 @@ export default async function generate(
       );
     }
 
-    const totalFieldChanges =
-      metadata.fields.added.length +
-      metadata.fields.removed.length +
-      metadata.fields.modified.length +
-      metadata.fields.renamed.length;
+    // const totalFieldChanges =
+    //   metadata.fields.added.length +
+    //   metadata.fields.removed.length +
+    //   metadata.fields.modified.length +
+    //   metadata.fields.renamed.length;
 
-    if (totalFieldChanges > 0) {
-      console.log(chalk.cyan(`   • Field changes: ${totalFieldChanges}`));
-    }
+    // if (totalFieldChanges > 0) {
+    //   console.log(chalk.cyan(`   • Field changes: ${totalFieldChanges}`));
+    // }
 
-    const totalIndexChanges =
-      metadata.indexes.added.length + metadata.indexes.removed.length;
+    // const totalIndexChanges =
+    //   metadata.indexes.added.length + metadata.indexes.removed.length;
 
-    if (totalIndexChanges > 0) {
-      console.log(chalk.cyan(`   • Index changes: ${totalIndexChanges}`));
-    }
+    // if (totalIndexChanges > 0) {
+    //   console.log(chalk.cyan(`   • Index changes: ${totalIndexChanges}`));
+    // }
 
     // Generate migration file
-    console.log(chalk.cyan("📝 Generating migration file..."));
+    console.log(chalk.cyan("\n📝 Generating migration file..."));
     await generateMigrationPreview(diffResult, options);
 
     // Show next steps
