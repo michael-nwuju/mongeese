@@ -1,4 +1,4 @@
-import mongoose, { Schema, SchemaType, Model } from "mongoose";
+import { Schema, SchemaType, Model, ConnectionStates } from "mongoose";
 import * as path from "path";
 import { glob } from "glob";
 import {
@@ -9,8 +9,17 @@ import {
   ModelDetectionConfig,
   MongooseFieldInfo,
 } from "../types";
+import { isESModuleProject } from "../utilities/is-esm-module-project";
 import { generateSnapshotHash } from "./snapshot";
 import { generateNestJSSnapshot } from "./nestjs-detection";
+import { createRequire } from "module";
+import type * as Mongoose from "mongoose";
+
+const projectRoot = process.cwd();
+const projectRequire = createRequire(path.join(projectRoot, "package.json"));
+
+// Use the project's mongoose
+const mongoose: typeof Mongoose = projectRequire("mongoose");
 
 /**
  * Detects if the current project is a NestJS project
@@ -33,11 +42,10 @@ function isNestJSProject(): boolean {
       return true;
     }
 
-    // Method 2: Check for NestJS-specific files
     const nestjsFiles = [
       "src/app.module.ts",
       "src/main.ts",
-      "apps/*/src/app.module.ts", // Monorepo structure
+      "apps/*/src/app.module.ts",
     ];
 
     for (const filePath of nestjsFiles) {
@@ -75,10 +83,316 @@ function isNestJSProject(): boolean {
 }
 
 /**
- * Detects Mongoose models in the current Node.js process
+ * Enhanced model detection that tries multiple approaches
  */
-export function detectRegisteredModels(): Model<any>[] {
-  return Object.values(mongoose.models) as Model<any>[];
+export function detectRegisteredModelsAdvanced(): {
+  models: Model<any>[];
+  detectionMethod: string;
+  diagnostics: any;
+} {
+  const diagnostics = {
+    mongooseInitialized: false,
+    defaultConnectionState: "unknown",
+    defaultModelCount: 0,
+    defaultModelNames: [] as string[],
+    totalConnections: 0,
+    connectionStates: [] as any[],
+    allModelNames: [] as string[],
+  };
+
+  let models: Model<any>[] = [];
+  let detectionMethod = "none";
+
+  try {
+    // Check Mongoose initialization
+    diagnostics.mongooseInitialized = !!(mongoose && mongoose.models);
+
+    // Method 1: Try default mongoose.models (most common)
+    if (
+      mongoose &&
+      mongoose.models &&
+      Object.keys(mongoose.models).length > 0
+    ) {
+      const defaultModels = Object.values(mongoose.models) as Model<any>[];
+      models.push(...defaultModels);
+
+      diagnostics.defaultModelCount = defaultModels.length;
+      diagnostics.defaultModelNames = defaultModels.map(m => m.modelName);
+
+      detectionMethod = "default-mongoose-models";
+      console.log(
+        `[Mongeese] ✅ Found ${defaultModels.length} models via mongoose.models`
+      );
+    }
+
+    // Method 2: Check all connections for models
+    if (mongoose.connections && mongoose.connections.length > 0) {
+      diagnostics.totalConnections = mongoose.connections.length;
+
+      mongoose.connections.forEach((connection, index) => {
+        const connInfo = {
+          index,
+          name: connection.name || "default",
+          readyState: connection.readyState,
+          modelCount: 0,
+          modelNames: [] as string[],
+        };
+
+        if (connection.models && Object.keys(connection.models).length > 0) {
+          const connectionModels = Object.values(
+            connection.models
+          ) as Model<any>[];
+          connInfo.modelCount = connectionModels.length;
+          connInfo.modelNames = connectionModels.map(m => m.modelName);
+
+          // Add models that aren't already in our list
+          connectionModels.forEach(model => {
+            if (
+              !models.some(
+                existingModel => existingModel.modelName === model.modelName
+              )
+            ) {
+              models.push(model);
+            }
+          });
+
+          if (detectionMethod === "none") {
+            detectionMethod = `connection-${index}`;
+          } else if (!detectionMethod.includes("multiple-connections")) {
+            detectionMethod = "multiple-connections";
+          }
+
+          console.log(
+            `[Mongeese] ✅ Found ${
+              connectionModels.length
+            } additional models in connection ${index} (${
+              connection.name || "unnamed"
+            })`
+          );
+        }
+
+        diagnostics.connectionStates.push(connInfo);
+      });
+    }
+
+    // Method 3: Try mongoose.connection.models (alternative access)
+    if (
+      models.length === 0 &&
+      mongoose.connection &&
+      mongoose.connection.models
+    ) {
+      try {
+        const connectionModels = Object.values(
+          mongoose.connection.models
+        ) as Model<any>[];
+        if (connectionModels.length > 0) {
+          models.push(...connectionModels);
+          detectionMethod = "mongoose-connection-models";
+          console.log(
+            `[Mongeese] ✅ Found ${connectionModels.length} models via mongoose.connection.models`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[Mongeese] Could not access mongoose.connection.models:",
+          error
+        );
+      }
+    }
+
+    // Method 4: Try to access models through mongoose.modelNames() (if available)
+    if (models.length === 0 && typeof mongoose.modelNames === "function") {
+      try {
+        const modelNames = mongoose.modelNames();
+        if (modelNames.length > 0) {
+          const namedModels = modelNames
+            .map(name => mongoose.model(name))
+            .filter(Boolean);
+          models.push(...namedModels);
+          detectionMethod = "mongoose-modelNames";
+          console.log(
+            `[Mongeese] ✅ Found ${namedModels.length} models via mongoose.modelNames()`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[Mongeese] Could not access models via mongoose.modelNames():",
+          error
+        );
+      }
+    }
+
+    // Update diagnostics
+    diagnostics.allModelNames = [...new Set(models.map(m => m.modelName))];
+
+    // Get connection states
+    if (mongoose.connection) {
+      const stateNames: { [key: number]: string } = {
+        0: "disconnected",
+        1: "connected",
+        2: "connecting",
+        3: "disconnecting",
+      };
+      diagnostics.defaultConnectionState = `${
+        mongoose.connection.readyState
+      } (${stateNames[mongoose.connection.readyState] || "unknown"})`;
+    }
+
+    // Validate all detected models
+    const validModels = models.filter(model => {
+      if (
+        !model ||
+        typeof model.find !== "function" ||
+        typeof model.findOne !== "function"
+      ) {
+        console.warn(
+          `[Mongeese] Invalid model detected: ${
+            model?.modelName || "unnamed"
+          } (missing required methods)`
+        );
+        return false;
+      }
+      return true;
+    });
+
+    return {
+      models: validModels,
+      detectionMethod,
+      diagnostics,
+    };
+  } catch (error) {
+    console.error("[Mongeese] Error in advanced model detection:", error);
+    return {
+      models: [],
+      detectionMethod: "error",
+      diagnostics,
+    };
+  }
+}
+
+/**
+ * Force model loading with multiple strategies
+ */
+async function forceModelLoading(config: ModelDetectionConfig = {}): Promise<{
+  loadedFiles: string[];
+  errors: Array<{ file: string; error: any }>;
+  discoveredFiles: string[];
+}> {
+  const errors: Array<{ file: string; error: any }> = [];
+  let loadedFiles: string[] = [];
+  let discoveredFiles: string[] = [];
+
+  try {
+    console.log("[Mongeese] 🔍 Discovering model files...");
+
+    // Discover files using our improved discovery
+    discoveredFiles = await discoverModelFiles(config);
+
+    if (discoveredFiles.length === 0) {
+      console.warn("[Mongeese] ⚠️ No model files discovered");
+      return { loadedFiles, errors, discoveredFiles };
+    }
+
+    console.log(
+      `[Mongeese] 📁 Found ${discoveredFiles.length} potential model files`
+    );
+
+    // Load files and track results
+    const loadResult = await loadModelFiles(discoveredFiles, config);
+    loadedFiles = loadResult.loaded;
+    errors.push(...loadResult.errors);
+
+    console.log(
+      `[Mongeese] ✅ Successfully loaded ${loadedFiles.length} model files`
+    );
+
+    if (errors.length > 0) {
+      console.warn(`[Mongeese] ⚠️ Failed to load ${errors.length} files:`);
+      errors.forEach(({ file, error }) => {
+        console.warn(
+          `   • ${path.relative(process.cwd(), file)}: ${
+            error.message || error
+          }`
+        );
+      });
+    }
+  } catch (error) {
+    console.error("[Mongeese] Error during model file loading:", error);
+    errors.push({ file: "discovery", error });
+  }
+
+  return { loadedFiles, errors, discoveredFiles };
+}
+
+/**
+ * Wait for models to be registered (with timeout)
+ */
+async function waitForModelsRegistration(
+  timeoutMs: number = 2000
+): Promise<Model<any>[]> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const result = detectRegisteredModelsAdvanced();
+
+    if (result.models.length > 0) {
+      console.log(
+        `[Mongeese] ⏱️ Models detected after ${Date.now() - startTime}ms wait`
+      );
+      return result.models;
+    }
+
+    // Wait a bit before checking again
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  console.warn(
+    `[Mongeese] ⏱️ Timeout waiting for model registration (${timeoutMs}ms)`
+  );
+  return [];
+}
+
+/**
+ * Ensure Mongoose connection is established before model detection
+ */
+async function ensureMongooseConnection(): Promise<boolean> {
+  try {
+    // Check if already connected
+    if (mongoose.connection.readyState === 1) {
+      console.log("[Mongeese] ✅ Mongoose already connected");
+      return true;
+    }
+
+    // If connecting, wait a bit
+    if (mongoose.connection.readyState === 2) {
+      console.log("[Mongeese] ⏳ Mongoose is connecting, waiting...");
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      // @ts-ignore
+      return mongoose.connection.readyState === ConnectionStates.connected;
+    }
+
+    // Try to establish connection using environment variables
+    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+
+    if (mongoUri) {
+      console.log("[Mongeese] 🔌 Establishing Mongoose connection...");
+      await mongoose.connect(mongoUri);
+      console.log("[Mongeese] ✅ Mongoose connection established");
+      return true;
+    } else {
+      console.warn(
+        "[Mongeese] ⚠️ No MongoDB URI found in environment variables"
+      );
+      console.warn("[Mongeese] Expected MONGODB_URI or MONGO_URI to be set");
+      return false;
+    }
+  } catch (error) {
+    console.warn(
+      "[Mongeese] ⚠️ Could not establish Mongoose connection:",
+      error
+    );
+    return false;
+  }
 }
 
 /**
@@ -178,6 +492,64 @@ export async function discoverModelFiles(
 }
 
 /**
+ * Load a model file with compatibility for both CommonJS and ES modules
+ */
+async function loadModelFile(filePath: string): Promise<void> {
+  const resolvedPath = path.resolve(filePath);
+  const isESProject = isESModuleProject(process.cwd());
+
+  // If it's an ES module project and a .js file, we need to use dynamic import
+  if (isESProject && filePath.endsWith(".js")) {
+    try {
+      // Convert to file URL for proper ES module import
+      const fileUrl =
+        process.platform === "win32"
+          ? `file:///${resolvedPath.replace(/\\/g, "/")}`
+          : `file://${resolvedPath}`;
+
+      // Use Function constructor to avoid TypeScript issues with dynamic import
+      const importFn = new Function("specifier", "return import(specifier)");
+      await importFn(fileUrl);
+      return;
+    } catch (importError) {
+      throw new Error(
+        `Failed to import ES module ${filePath}: ${
+          importError instanceof Error
+            ? importError.message
+            : String(importError)
+        }`
+      );
+    }
+  }
+
+  // For CommonJS projects, .cjs files, or .ts files, use require
+  try {
+    // Clear require cache for fresh load
+    if (typeof require !== "undefined" && require.cache) {
+      delete require.cache[resolvedPath];
+    }
+
+    require(resolvedPath);
+  } catch (requireError) {
+    // Check if this is the ES module error
+    const errorMessage =
+      requireError instanceof Error
+        ? requireError.message
+        : String(requireError);
+
+    if (errorMessage.includes("require() of ES Module")) {
+      throw new Error(
+        `Cannot require ES module ${filePath}. ` +
+          `Your project has "type": "module" in package.json. ` +
+          `Consider renaming model files to .cjs extension or using ES module syntax.`
+      );
+    }
+
+    throw requireError;
+  }
+}
+
+/**
  * Loads model files and attempts to register them with Mongoose
  */
 export async function loadModelFiles(
@@ -197,6 +569,13 @@ export async function loadModelFiles(
     `[Mongeese] Attempting to load ${filePaths.length} model files...`
   );
 
+  const isESProject = isESModuleProject(process.cwd());
+  if (isESProject) {
+    console.log(
+      "[Mongeese] Detected ES module project, using dynamic imports for .js files"
+    );
+  }
+
   for (let i = 0; i < filePaths.length; i++) {
     const filePath = filePaths[i];
 
@@ -206,13 +585,23 @@ export async function loadModelFiles(
     }
 
     try {
-      // Clear require cache to ensure fresh load
-      delete require.cache[path.resolve(filePath)];
-
-      // Require the file
-      require(filePath);
+      await loadModelFile(filePath);
       loaded.push(filePath);
     } catch (error) {
+      // Enhanced error logging for ES module issues
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      if (
+        errorMessage.includes("ES module") ||
+        errorMessage.includes("require() of ES Module")
+      ) {
+        console.warn(
+          `[Mongeese] ES Module compatibility issue with ${filePath}. ` +
+            `Consider renaming to .cjs or updating to ES module syntax.`
+        );
+      }
+
       errors.push({ file: filePath, error });
     }
   }
@@ -220,6 +609,26 @@ export async function loadModelFiles(
   console.log(
     `[Mongeese] Completed loading: ${loaded.length} successful, ${errors.length} failed`
   );
+
+  // Log ES module specific guidance if there were errors in an ES project
+  if (isESProject && errors.length > 0) {
+    const esModuleErrors = errors.filter(
+      e =>
+        (e.error instanceof Error && e.error.message.includes("ES module")) ||
+        (typeof e.error === "string" && e.error.includes("ES module"))
+    );
+
+    if (esModuleErrors.length > 0) {
+      console.log(
+        `\n[Mongeese] ES Module Project Detected - ${esModuleErrors.length} files failed to load due to module system compatibility.\n` +
+          `Solutions for model files:\n` +
+          `1. Rename .js model files to .cjs (recommended)\n` +
+          `2. Update model files to use ES module syntax (import/export)\n` +
+          `3. Remove "type": "module" from package.json if not needed\n`
+      );
+    }
+  }
+
   return { loaded, errors };
 }
 
@@ -346,6 +755,12 @@ function extractIndexes(schema: Schema): IndexDefinition[] {
   return indexes;
 }
 
+export function detectRegisteredModels() {
+  const result = detectRegisteredModelsAdvanced();
+
+  return result.models;
+}
+
 /**
  * Generates a snapshot from Mongoose models registered in the current process
  */
@@ -420,7 +835,7 @@ export function generateSnapshotFromModels(
 
 /**
  * Auto-discovers and loads Mongoose models, then generates a snapshot
- * Automatically detects NestJS projects and uses appropriate detection method
+ * Uses multiple detection strategies for maximum compatibility
  */
 export async function generateSnapshotFromCodebase(
   config: ModelDetectionConfig = {}
@@ -432,105 +847,178 @@ export async function generateSnapshotFromCodebase(
     loadErrors: Array<{ file: string; error: any }>;
     detectedModels: string[];
     isNestJS: boolean;
-    detectionMethod?: string;
+    detectionMethod: string;
+    diagnostics: any;
   };
 }> {
-  console.log("[Mongeese] Auto-discovering Mongoose models...");
+  console.log("[Mongeese] 🚀 Starting comprehensive model detection...");
 
   const isNestJS = isNestJSProject();
+  let detectedModels: Model<any>[] = [];
+  let discoveredFiles: string[] = [];
+  let loadedFiles: string[] = [];
+  let loadErrors: Array<{ file: string; error: any }> = [];
+  let detectionMethod = "unknown";
+  let diagnostics: any = {};
 
   try {
-    let detectedModels: Model<any>[] = [];
-    let discoveredFiles: string[] = [];
-    let loadedFiles: string[] = [];
-    let loadErrors: Array<{ file: string; error: any }> = [];
-    let detectionMethod = "standard";
+    // CRITICAL: Ensure Mongoose connection before loading models
+    console.log("[Mongeese] 🔌 Ensuring Mongoose connection...");
+    const connectionEstablished = await ensureMongooseConnection();
 
-    if (isNestJS) {
-      console.log(
-        "[Mongeese] 🚀 NestJS project detected - using enhanced detection"
+    if (!connectionEstablished) {
+      console.warn(
+        "[Mongeese] ⚠️ Proceeding without Mongoose connection - models may not register properly"
       );
-
-      // Automatically use NestJS detection with sensible defaults
-      const nestjsConfig = {
-        ...config,
-        nestjs: {
-          bootstrap: true,
-          alwaysDiscoverFiles: false,
-          includeEntities: true,
-          ...config.nestjs, // Allow override if user provides nestjs config
-        },
-      };
-
-      const nestjsResult = await generateNestJSSnapshot(nestjsConfig);
-      detectedModels = nestjsResult.models;
-      loadErrors = nestjsResult.errors;
-      detectionMethod = nestjsResult.metadata.detectionMethod;
-
-      console.log(
-        `[Mongeese] ✅ NestJS detection completed using: ${detectionMethod}`
-      );
-      console.log(`[Mongeese] 📊 Found ${detectedModels.length} models`);
-    } else {
-      console.log("[Mongeese] 📁 Standard Mongoose project detected");
     }
 
-    // Fallback to standard detection if no models found
+    // Strategy 1: Try to detect already registered models first
+    console.log("[Mongeese] 📊 Checking for already registered models...");
+    const initialDetection = detectRegisteredModelsAdvanced();
+
+    if (initialDetection.models.length > 0) {
+      console.log(
+        `[Mongeese] ✅ Found ${initialDetection.models.length} already registered models`
+      );
+      detectedModels = initialDetection.models;
+      detectionMethod = `pre-existing-${initialDetection.detectionMethod}`;
+      diagnostics = initialDetection.diagnostics;
+    } else {
+      console.log(
+        "[Mongeese] 📝 No pre-existing models found, proceeding with file discovery..."
+      );
+      diagnostics = initialDetection.diagnostics;
+    }
+
+    // Strategy 2: NestJS-specific detection if no models found yet
+    if (detectedModels.length === 0 && isNestJS) {
+      console.log(
+        "[Mongeese] 🚀 NestJS project detected - trying enhanced detection"
+      );
+
+      try {
+        const nestjsConfig = {
+          ...config,
+          nestjs: {
+            bootstrap: true,
+            alwaysDiscoverFiles: false,
+            includeEntities: true,
+            ...config.nestjs,
+          },
+        };
+
+        const nestjsResult = await generateNestJSSnapshot(nestjsConfig);
+
+        if (nestjsResult.models.length > 0) {
+          detectedModels = nestjsResult.models;
+          loadErrors = [...loadErrors, ...nestjsResult.errors];
+          detectionMethod = `nestjs-${nestjsResult.metadata.detectionMethod}`;
+
+          console.log(
+            `[Mongeese] ✅ NestJS detection successful: ${detectedModels.length} models`
+          );
+        } else {
+          console.log(
+            "[Mongeese] NestJS detection found no models, falling back to standard detection"
+          );
+        }
+      } catch (nestjsError) {
+        console.warn("[Mongeese] NestJS detection failed:", nestjsError);
+        loadErrors.push({ file: "nestjs-detection", error: nestjsError });
+      }
+    }
+
+    // Strategy 3: Standard file discovery and loading
     if (detectedModels.length === 0) {
-      console.log("[Mongeese] 🔄 Falling back to standard model detection...");
+      console.log("[Mongeese] 📁 Falling back to standard file discovery...");
 
-      // Discover model files
-      discoveredFiles = await discoverModelFiles(config);
+      const loadingResult = await forceModelLoading(config);
+      discoveredFiles = loadingResult.discoveredFiles;
+      loadedFiles = loadingResult.loadedFiles;
+      loadErrors = [...loadErrors, ...loadingResult.errors];
 
-      console.log(
-        `[Mongeese] 📂 Discovered ${discoveredFiles.length} potential model files`
-      );
+      // Wait a moment for models to register after loading
+      if (loadedFiles.length > 0) {
+        console.log("[Mongeese] ⏱️ Waiting for models to register...");
+        detectedModels = await waitForModelsRegistration(5000); // Increased timeout
 
-      // Load model files
-      const loadResult = await loadModelFiles(discoveredFiles, config);
-      loadedFiles = loadResult.loaded;
-      loadErrors = [...loadErrors, ...loadResult.errors];
+        if (detectedModels.length > 0) {
+          const finalDetection = detectRegisteredModelsAdvanced();
+          detectionMethod = `file-loading-${finalDetection.detectionMethod}`;
+          diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
+        } else {
+          // Try forcing a connection check after model loading
+          console.log(
+            "[Mongeese] 🔄 Rechecking connection state after model loading..."
+          );
+          await ensureMongooseConnection();
 
-      console.log(
-        `[Mongeese] ✅ Successfully loaded ${loadedFiles.length} model files`
-      );
-
-      if (loadErrors.length > 0) {
-        console.warn(
-          `[Mongeese] ⚠️  Failed to load ${loadErrors.length} model files`
-        );
-        // Log specific errors in debug mode
-        if (process.env.DEBUG) {
-          loadErrors.forEach(({ file, error }) => {
-            console.warn(`   - ${path.basename(file)}: ${error.message}`);
-          });
+          // One more attempt after connection check
+          detectedModels = await waitForModelsRegistration(2000);
+          if (detectedModels.length > 0) {
+            const finalDetection = detectRegisteredModelsAdvanced();
+            detectionMethod = `reconnect-${finalDetection.detectionMethod}`;
+            diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
+          } else {
+            detectionMethod = "file-loading-failed";
+          }
         }
       }
-
-      // Generate snapshot from loaded models
-      detectedModels = detectRegisteredModels();
-      detectionMethod = isNestJS ? "nestjs-fallback" : "standard";
     }
 
-    console.log(
-      `[Mongeese] 🎯 Final result: ${detectedModels.length} registered models`
-    );
+    // Strategy 4: Last resort - comprehensive model detection
+    if (detectedModels.length === 0) {
+      console.log("[Mongeese] 🔄 Attempting comprehensive model detection...");
 
-    // Log detected models for debugging
+      const finalDetection = detectRegisteredModelsAdvanced();
+      detectedModels = finalDetection.models;
+      detectionMethod = `final-attempt-${finalDetection.detectionMethod}`;
+      diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
+    }
+
+    // Final results
+    console.log(
+      `[Mongeese] 🎯 Detection completed: ${detectedModels.length} models found`
+    );
+    console.log(`[Mongeese] 📋 Detection method: ${detectionMethod}`);
+
     if (detectedModels.length > 0) {
-      console.log("[Mongeese] 📋 Detected models:");
+      console.log("[Mongeese] 📋 Final detected models:");
       detectedModels.forEach(model => {
         console.log(
           `   • ${model.modelName} → ${model.collection.collectionName}`
         );
       });
     } else {
-      console.log("[Mongeese] ❌ No models detected. Please check:");
-      console.log("   • Your models are properly exported");
-      console.log("   • Model files follow naming conventions");
+      console.error("[Mongeese] ❌ No models detected after all strategies!");
+      console.log("[Mongeese] 🔧 Debug information:");
+      console.log(JSON.stringify(diagnostics, null, 2));
+
+      console.log("\n[Mongeese] 💡 Troubleshooting suggestions:");
+      console.log("   1. Check that your models are properly exported");
+      console.log("   2. Ensure model files follow naming conventions");
+      console.log("   3. Verify mongoose connection is established");
+      console.log("   4. Try manually importing a model file to test");
+      console.log("   5. Check that MONGODB_URI environment variable is set");
+      console.log(
+        "   6. Ensure your model files call mongoose.model() to register models"
+      );
+
+      if (diagnostics.defaultConnectionState?.includes("0 (disconnected)")) {
+        console.log("\n[Mongeese] 🔥 CRITICAL: Mongoose is disconnected!");
+        console.log("   • Models cannot register without an active connection");
+        console.log("   • Set MONGODB_URI environment variable");
+        console.log("   • Or establish connection before running mongeese");
+      }
+
       if (isNestJS) {
-        console.log("   • Your NestJS modules are properly configured");
-        console.log("   • @Schema() decorators are applied to your classes");
+        console.log("   7. Check NestJS module configuration");
+        console.log("   8. Ensure @Schema() decorators are applied");
+        console.log("   9. Verify MongooseModule.forFeature() is used");
+      }
+
+      if (process.env.NODE_ENV !== "test") {
+        process.exit(1);
       }
     }
 
@@ -547,10 +1035,14 @@ export async function generateSnapshotFromCodebase(
         ),
         isNestJS,
         detectionMethod,
+        diagnostics,
       },
     };
   } catch (error) {
-    console.error("[Mongeese] ❌ Error during snapshot generation:", error);
+    console.error(
+      "[Mongeese] ❌ Critical error during snapshot generation:",
+      error
+    );
     throw error;
   }
 }

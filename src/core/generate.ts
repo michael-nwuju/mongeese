@@ -203,7 +203,7 @@ ${formatMetadataSummary(diffResult.metadata)}
  * Warnings:
 ${formatWarnings(diffResult.warnings)}
  */
-class ${migrationName} {
+export class ${migrationName} {
   /**
    * Apply the migration (up)
    */
@@ -218,8 +218,6 @@ ${formatMigrationCommands(diffResult.up)}
 ${formatMigrationCommands(diffResult.down)}
   }
 }
-
-module.exports = { ${migrationName} };
 `;
 }
 

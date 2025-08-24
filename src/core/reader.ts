@@ -2,6 +2,7 @@ import fs from "fs-extra";
 import path from "path";
 import chalk from "chalk";
 import { Db } from "mongodb";
+import { isESModuleProject } from "../utilities/is-esm-module-project";
 
 export interface MigrationFile {
   filename: string;
@@ -79,35 +80,46 @@ export async function getMigrationFiles(): Promise<MigrationFile[]> {
 
 /**
  * Load a migration file and return its instance
+ * Supports both CommonJS and ES modules
  */
 export async function loadMigrationFile(
   migrationFile: MigrationFile
 ): Promise<MigrationFile> {
   try {
-    // Clear require cache to ensure fresh load
     const absolutePath = path.resolve(migrationFile.filepath);
-    delete require.cache[absolutePath];
+    const isESProject = isESModuleProject(process.cwd());
 
-    // Import the migration
-    const migrationModule = require(absolutePath);
+    let migrationModule: any;
 
-    // Handle different export formats
+    // If ES module project and .js file, use dynamic import
+    if (isESProject && migrationFile.filepath.endsWith(".js")) {
+      const fileUrl =
+        process.platform === "win32"
+          ? `file:///${absolutePath.replace(/\\/g, "/")}`
+          : `file://${absolutePath}`;
+
+      const importFn = new Function("specifier", "return import(specifier)");
+      migrationModule = await importFn(fileUrl);
+    } else {
+      // For CommonJS, .cjs, or TypeScript files
+      if (typeof require !== "undefined" && require.cache) {
+        delete require.cache[absolutePath];
+      }
+      migrationModule = require(absolutePath);
+    }
+
+    // Determine the migration class
     let MigrationClass;
-
     if (migrationModule[migrationFile.className]) {
-      // Named export: export class Migration20250804_120000_add_user_field
       MigrationClass = migrationModule[migrationFile.className];
     } else if (migrationModule.default) {
-      // Default export: export default class Migration...
       MigrationClass = migrationModule.default;
     } else {
-      // Look for any class export
       const classNames = Object.keys(migrationModule).filter(
         key =>
           typeof migrationModule[key] === "function" &&
           key.startsWith("Migration")
       );
-
       if (classNames.length === 1) {
         MigrationClass = migrationModule[classNames[0]];
       } else {
@@ -117,15 +129,13 @@ export async function loadMigrationFile(
       }
     }
 
-    // Validate the migration class
+    // Validate migration class
     const instance = new MigrationClass();
-
     if (typeof instance.up !== "function") {
       throw new Error(
         `Migration ${migrationFile.filename} missing 'up' method`
       );
     }
-
     if (typeof instance.down !== "function") {
       throw new Error(
         `Migration ${migrationFile.filename} missing 'down' method`

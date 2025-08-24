@@ -9,9 +9,10 @@ const EXTENSION = PROJECT_TYPE === "typescript" ? "ts" : "js";
 const BOOTSTRAP_FILE = `mongeese.connection.${EXTENSION}`;
 
 const BOOTSTRAP_TEMPLATE_TS = `// mongeese.connection.ts
-
-import mongoose from "mongoose";
 import { MongoClient, Db } from "mongodb";
+import * as dotenv from "dotenv";
+
+dotenv?.config();
 
 // DbWithClient type that extends Db with an attached client property
 export interface DbWithClient extends Db {
@@ -23,10 +24,10 @@ export interface DbWithClient extends Db {
  * This allows Mongeese to use transactions for migration operations.
  */
 export async function getDbWithClient(dbName?: string): Promise<DbWithClient> {
-  const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
-  const client = new MongoClient(mongoUri);
+  const client = new MongoClient(process.env.MONGODB_URI);
   
   await client.connect();
+
   const db = client.db(dbName);
   
   // Attach the client to the db instance
@@ -37,19 +38,20 @@ export async function getDbWithClient(dbName?: string): Promise<DbWithClient> {
 `;
 
 const BOOTSTRAP_TEMPLATE_JS = `// mongeese.connection.js
+import { MongoClient } from "mongodb";
+import * as dotenv from "dotenv";
 
-const mongoose = require("mongoose");
-const { MongoClient } = require("mongodb");
+dotenv?.config();
 
 /**
  * Factory function that returns a DbWithClient object with the client attached.
  * This allows Mongeese to use transactions for migration operations.
  */
-async function getDbWithClient(dbName) {
-  const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/yourdb";
-  const client = new MongoClient(mongoUri);
+export async function getDbWithClient(dbName) {
+  const client = new MongoClient(process.env.MONGODB_URI);
   
   await client.connect();
+
   const db = client.db(dbName);
   
   // Attach the client to the db instance
@@ -57,8 +59,6 @@ async function getDbWithClient(dbName) {
   
   return db;
 }
-
-module.exports = { getDbWithClient };
 `;
 
 const BOOTSTRAP_TEMPLATE =
@@ -82,7 +82,7 @@ export default async function init(): Promise<void> {
     );
 
     console.log(
-      chalk.cyan("2. Run 'mongeese generate' to create your first snapshot")
+      chalk.cyan("2. Run 'mongeese generate' to create your first migration")
     );
     process.exit(0);
   } catch (error) {
