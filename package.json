@@ -8,6 +8,7 @@
     "build": "rm -rf dist && tsc",
     "dev": "ts-node src/bin/mongeese.ts",
     "prepublishOnly": "npm run build",
+    "deploy": "npm version patch && git push && npm publish",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -15,17 +16,17 @@
     "url": "git+https://github.com/michael-nwuju/mongeese.git"
   },
   "keywords": [
+    "mongo",
     "mongodb",
     "mongoose",
     "migration",
+    "migrations",
     "schema",
-    "database",
-    "cli",
-    "typescript",
-    "nestjs"
+    "nestjs",
+    "migrate"
   ],
   "author": "Michael Nwuju",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/michael-nwuju/mongeese/issues"
   },
@@ -57,15 +58,10 @@
     "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.0.0"
   },
   "resolutions": {
     "chalk": "4.1.2",
     "p-limit": "3.1.0"
-  },
-  "files": [
-    "dist/**/*",
-    "README.md",
-    "LICENSE"
-  ]
+  }
 }
