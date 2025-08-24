@@ -1,6 +1,6 @@
 {
   "name": "mongeese-cli",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Auto-generate MongoDB migration scripts by detecting changes in your Mongoose schemas.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
