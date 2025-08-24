@@ -54,6 +54,7 @@ export interface CollectionStructure {
   fields: {
     [fieldName: string]: FieldDefinition;
   };
+  isEmpty?: boolean;
   indexes?: IndexDefinition[];
   validator?: {
     $jsonSchema: any;

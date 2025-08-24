@@ -120,9 +120,6 @@ export function detectRegisteredModelsAdvanced(): {
       diagnostics.defaultModelNames = defaultModels.map(m => m.modelName);
 
       detectionMethod = "default-mongoose-models";
-      console.log(
-        `[Mongeese] ✅ Found ${defaultModels.length} models via mongoose.models`
-      );
     }
 
     // Method 2: Check all connections for models
@@ -161,14 +158,6 @@ export function detectRegisteredModelsAdvanced(): {
           } else if (!detectionMethod.includes("multiple-connections")) {
             detectionMethod = "multiple-connections";
           }
-
-          console.log(
-            `[Mongeese] ✅ Found ${
-              connectionModels.length
-            } additional models in connection ${index} (${
-              connection.name || "unnamed"
-            })`
-          );
         }
 
         diagnostics.connectionStates.push(connInfo);
@@ -188,9 +177,6 @@ export function detectRegisteredModelsAdvanced(): {
         if (connectionModels.length > 0) {
           models.push(...connectionModels);
           detectionMethod = "mongoose-connection-models";
-          console.log(
-            `[Mongeese] ✅ Found ${connectionModels.length} models via mongoose.connection.models`
-          );
         }
       } catch (error) {
         console.warn(
@@ -210,9 +196,6 @@ export function detectRegisteredModelsAdvanced(): {
             .filter(Boolean);
           models.push(...namedModels);
           detectionMethod = "mongoose-modelNames";
-          console.log(
-            `[Mongeese] ✅ Found ${namedModels.length} models via mongoose.modelNames()`
-          );
         }
       } catch (error) {
         console.warn(
@@ -283,31 +266,31 @@ async function forceModelLoading(config: ModelDetectionConfig = {}): Promise<{
   let discoveredFiles: string[] = [];
 
   try {
-    console.log("[Mongeese] 🔍 Discovering model files...");
-
     // Discover files using our improved discovery
     discoveredFiles = await discoverModelFiles(config);
 
     if (discoveredFiles.length === 0) {
-      console.warn("[Mongeese] ⚠️ No model files discovered");
+      console.warn("\n[Mongeese] ⚠️ No model files discovered");
       return { loadedFiles, errors, discoveredFiles };
     }
 
     console.log(
-      `[Mongeese] 📁 Found ${discoveredFiles.length} potential model files`
+      `\n[Mongeese] 📁 Found ${discoveredFiles.length} potential model files`
     );
 
     // Load files and track results
     const loadResult = await loadModelFiles(discoveredFiles, config);
+
     loadedFiles = loadResult.loaded;
+
     errors.push(...loadResult.errors);
 
     console.log(
-      `[Mongeese] ✅ Successfully loaded ${loadedFiles.length} model files`
+      `\n[Mongeese] ✅ Successfully loaded ${loadedFiles.length} model files`
     );
 
     if (errors.length > 0) {
-      console.warn(`[Mongeese] ⚠️ Failed to load ${errors.length} files:`);
+      console.warn(`\n[Mongeese] ⚠️ Failed to load ${errors.length} files:`);
       errors.forEach(({ file, error }) => {
         console.warn(
           `   • ${path.relative(process.cwd(), file)}: ${
@@ -317,7 +300,6 @@ async function forceModelLoading(config: ModelDetectionConfig = {}): Promise<{
       });
     }
   } catch (error) {
-    console.error("[Mongeese] Error during model file loading:", error);
     errors.push({ file: "discovery", error });
   }
 
@@ -336,9 +318,6 @@ async function waitForModelsRegistration(
     const result = detectRegisteredModelsAdvanced();
 
     if (result.models.length > 0) {
-      console.log(
-        `[Mongeese] ⏱️ Models detected after ${Date.now() - startTime}ms wait`
-      );
       return result.models;
     }
 
@@ -359,38 +338,18 @@ async function ensureMongooseConnection(): Promise<boolean> {
   try {
     // Check if already connected
     if (mongoose.connection.readyState === 1) {
-      console.log("[Mongeese] ✅ Mongoose already connected");
       return true;
     }
 
     // If connecting, wait a bit
     if (mongoose.connection.readyState === 2) {
-      console.log("[Mongeese] ⏳ Mongoose is connecting, waiting...");
       await new Promise(resolve => setTimeout(resolve, 2000));
       // @ts-ignore
       return mongoose.connection.readyState === ConnectionStates.connected;
     }
 
-    // Try to establish connection using environment variables
-    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
-
-    if (mongoUri) {
-      console.log("[Mongeese] 🔌 Establishing Mongoose connection...");
-      await mongoose.connect(mongoUri);
-      console.log("[Mongeese] ✅ Mongoose connection established");
-      return true;
-    } else {
-      console.warn(
-        "[Mongeese] ⚠️ No MongoDB URI found in environment variables"
-      );
-      console.warn("[Mongeese] Expected MONGODB_URI or MONGO_URI to be set");
-      return false;
-    }
+    return false;
   } catch (error) {
-    console.warn(
-      "[Mongeese] ⚠️ Could not establish Mongoose connection:",
-      error
-    );
     return false;
   }
 }
@@ -565,16 +524,7 @@ export async function loadModelFiles(
     return { loaded, errors };
   }
 
-  console.log(
-    `[Mongeese] Attempting to load ${filePaths.length} model files...`
-  );
-
   const isESProject = isESModuleProject(process.cwd());
-  if (isESProject) {
-    console.log(
-      "[Mongeese] Detected ES module project, using dynamic imports for .js files"
-    );
-  }
 
   for (let i = 0; i < filePaths.length; i++) {
     const filePath = filePaths[i];
@@ -772,17 +722,16 @@ export function generateSnapshotFromModels(
 
   if (detectedModels.length === 0) {
     console.warn("[Mongeese] No Mongoose models found in current process");
+
+    process.exit(1);
   }
 
   const collections: { [collectionName: string]: CollectionStructure } = {};
 
   for (const model of detectedModels) {
     const schema = model.schema;
-    const collectionName = model.collection.collectionName;
 
-    console.log(
-      `[Mongeese] Processing model: ${model.modelName} -> ${collectionName}`
-    );
+    const collectionName = model.collection.collectionName;
 
     const fields: { [fieldName: string]: FieldDefinition } = {};
 
@@ -851,50 +800,37 @@ export async function generateSnapshotFromCodebase(
     diagnostics: any;
   };
 }> {
-  console.log("[Mongeese] 🚀 Starting comprehensive model detection...");
-
   const isNestJS = isNestJSProject();
+
   let detectedModels: Model<any>[] = [];
+
   let discoveredFiles: string[] = [];
+
   let loadedFiles: string[] = [];
+
   let loadErrors: Array<{ file: string; error: any }> = [];
+
   let detectionMethod = "unknown";
+
   let diagnostics: any = {};
 
   try {
-    // CRITICAL: Ensure Mongoose connection before loading models
-    console.log("[Mongeese] 🔌 Ensuring Mongoose connection...");
-    const connectionEstablished = await ensureMongooseConnection();
+    await ensureMongooseConnection();
 
-    if (!connectionEstablished) {
-      console.warn(
-        "[Mongeese] ⚠️ Proceeding without Mongoose connection - models may not register properly"
-      );
-    }
+    // // Strategy 1: Try to detect already registered models first
+    // const initialDetection = detectRegisteredModelsAdvanced();
 
-    // Strategy 1: Try to detect already registered models first
-    console.log("[Mongeese] 📊 Checking for already registered models...");
-    const initialDetection = detectRegisteredModelsAdvanced();
+    // if (initialDetection.models.length > 0) {
+    //   detectedModels = initialDetection.models;
 
-    if (initialDetection.models.length > 0) {
-      console.log(
-        `[Mongeese] ✅ Found ${initialDetection.models.length} already registered models`
-      );
-      detectedModels = initialDetection.models;
-      detectionMethod = `pre-existing-${initialDetection.detectionMethod}`;
-      diagnostics = initialDetection.diagnostics;
-    } else {
-      console.log(
-        "[Mongeese] 📝 No pre-existing models found, proceeding with file discovery..."
-      );
-      diagnostics = initialDetection.diagnostics;
-    }
+    //   detectionMethod = `pre-existing-${initialDetection.detectionMethod}`;
+    // }
+
+    // diagnostics = initialDetection.diagnostics;
 
     // Strategy 2: NestJS-specific detection if no models found yet
     if (detectedModels.length === 0 && isNestJS) {
-      console.log(
-        "[Mongeese] 🚀 NestJS project detected - trying enhanced detection"
-      );
+      console.log("\n[Mongeese] NestJS project detected");
 
       try {
         const nestjsConfig = {
@@ -911,17 +847,20 @@ export async function generateSnapshotFromCodebase(
 
         if (nestjsResult.models.length > 0) {
           detectedModels = nestjsResult.models;
+
           loadErrors = [...loadErrors, ...nestjsResult.errors];
+
           detectionMethod = `nestjs-${nestjsResult.metadata.detectionMethod}`;
 
           console.log(
-            `[Mongeese] ✅ NestJS detection successful: ${detectedModels.length} models`
-          );
-        } else {
-          console.log(
-            "[Mongeese] NestJS detection found no models, falling back to standard detection"
+            `\n[Mongeese] ✅ NestJS detection successful: ${detectedModels.length} models`
           );
         }
+        // else {
+        //   console.log(
+        //     "[Mongeese] NestJS detection found no models, falling back to standard detection"
+        //   );
+        // }
       } catch (nestjsError) {
         console.warn("[Mongeese] NestJS detection failed:", nestjsError);
         loadErrors.push({ file: "nestjs-detection", error: nestjsError });
@@ -930,34 +869,41 @@ export async function generateSnapshotFromCodebase(
 
     // Strategy 3: Standard file discovery and loading
     if (detectedModels.length === 0) {
-      console.log("[Mongeese] 📁 Falling back to standard file discovery...");
+      console.log("\n[Mongeese] 📁 Searching for Mongoose models...");
 
       const loadingResult = await forceModelLoading(config);
+
       discoveredFiles = loadingResult.discoveredFiles;
+
       loadedFiles = loadingResult.loadedFiles;
+
       loadErrors = [...loadErrors, ...loadingResult.errors];
 
       // Wait a moment for models to register after loading
       if (loadedFiles.length > 0) {
-        console.log("[Mongeese] ⏱️ Waiting for models to register...");
         detectedModels = await waitForModelsRegistration(5000); // Increased timeout
 
         if (detectedModels.length > 0) {
           const finalDetection = detectRegisteredModelsAdvanced();
+
           detectionMethod = `file-loading-${finalDetection.detectionMethod}`;
+
           diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
         } else {
           // Try forcing a connection check after model loading
           console.log(
-            "[Mongeese] 🔄 Rechecking connection state after model loading..."
+            "\n[Mongeese] 🔄 Rechecking connection state after model loading..."
           );
           await ensureMongooseConnection();
 
           // One more attempt after connection check
           detectedModels = await waitForModelsRegistration(2000);
+
           if (detectedModels.length > 0) {
             const finalDetection = detectRegisteredModelsAdvanced();
+
             detectionMethod = `reconnect-${finalDetection.detectionMethod}`;
+
             diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
           } else {
             detectionMethod = "file-loading-failed";
@@ -971,26 +917,21 @@ export async function generateSnapshotFromCodebase(
       console.log("[Mongeese] 🔄 Attempting comprehensive model detection...");
 
       const finalDetection = detectRegisteredModelsAdvanced();
+
       detectedModels = finalDetection.models;
+
       detectionMethod = `final-attempt-${finalDetection.detectionMethod}`;
+
       diagnostics = { ...diagnostics, ...finalDetection.diagnostics };
     }
 
     // Final results
     console.log(
-      `[Mongeese] 🎯 Detection completed: ${detectedModels.length} models found`
+      `\n[Mongeese] ✅ Detection completed: ${detectedModels.length} models found`
     );
-    console.log(`[Mongeese] 📋 Detection method: ${detectionMethod}`);
 
-    if (detectedModels.length > 0) {
-      console.log("[Mongeese] 📋 Final detected models:");
-      detectedModels.forEach(model => {
-        console.log(
-          `   • ${model.modelName} → ${model.collection.collectionName}`
-        );
-      });
-    } else {
-      console.error("[Mongeese] ❌ No models detected after all strategies!");
+    if (detectedModels.length <= 0) {
+      console.error("[Mongeese] ❌ No models detected");
       console.log("[Mongeese] 🔧 Debug information:");
       console.log(JSON.stringify(diagnostics, null, 2));
 
@@ -1017,9 +958,7 @@ export async function generateSnapshotFromCodebase(
         console.log("   9. Verify MongooseModule.forFeature() is used");
       }
 
-      if (process.env.NODE_ENV !== "test") {
-        process.exit(1);
-      }
+      process.exit(1);
     }
 
     const snapshot = generateSnapshotFromModels(detectedModels, config);

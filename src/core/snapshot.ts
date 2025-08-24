@@ -4,6 +4,7 @@ import {
   FieldDefinition,
   SnapshotError,
   DatabaseFieldInfo,
+  IndexDefinition,
 } from "../types";
 import pLimit from "p-limit";
 import { flatten } from "../utilities/flatten";
@@ -166,12 +167,6 @@ async function snapCollectionForComparison(
       }));
 
     collections[collection.collectionName] = { fields, indexes };
-
-    console.log(
-      `   📊 Collection '${collection.collectionName}': ${
-        Object.keys(fields).length
-      } fields detected (Mongoose fields filtered)`
-    );
   } catch (error) {
     errors.push({ collection: collection.collectionName, error });
 
@@ -186,9 +181,55 @@ async function snapCollectionForComparisonOptimized(
   collections: { [collectionName: string]: CollectionStructure },
   collection: Collection<Document>,
   errors: SnapshotError[],
-  sampleSize: number = 25 // Reduced from 50 for faster processing
+  sampleSize: number = 30 // Reduced from 50 for faster processing
 ) {
   try {
+    // First, check if collection is truly empty
+    const documentCount = await collection.estimatedDocumentCount();
+
+    if (documentCount === 0) {
+      // For empty collections, only capture indexes (they still exist)
+      const dbIndexes = await collection.indexes();
+
+      const indexes = dbIndexes
+        .filter(index => index.name !== "_id_")
+        .map(index => {
+          const normalizedIndex: IndexDefinition = {
+            fields: Object.entries(index.key).map(([field, direction]) => ({
+              field,
+              direction: direction as 1 | -1,
+            })),
+            unique: index.unique || false,
+            sparse: index.sparse || false,
+          };
+
+          // Capture TTL information
+          if (index.expireAfterSeconds !== undefined) {
+            normalizedIndex.expireAfterSeconds = index.expireAfterSeconds;
+          }
+
+          // Capture other index properties
+          if (index.partialFilterExpression) {
+            normalizedIndex.partialFilterExpression =
+              index.partialFilterExpression;
+          }
+          if (index.collation) {
+            normalizedIndex.collation = index.collation;
+          }
+          if (index.name) {
+            normalizedIndex.name = index.name;
+          }
+
+          return normalizedIndex;
+        });
+
+      return (collections[collection.collectionName] = {
+        fields: {}, // Empty fields object for empty collection
+        indexes,
+        isEmpty: true, // Add metadata flag
+      });
+    }
+
     // Use a more efficient aggregation pipeline
     const samples = await collection
       .aggregate([
@@ -202,10 +243,12 @@ async function snapCollectionForComparisonOptimized(
       return (collections[collection.collectionName] = {
         fields: {},
         indexes: [],
+        isEmpty: true,
       });
     }
 
     const fields: { [fieldName: string]: FieldDefinition } = {};
+
     const fieldInfo: { [fieldName: string]: DatabaseFieldInfo } = {};
 
     // Pre-allocate field tracking for better performance
@@ -291,28 +334,43 @@ async function snapCollectionForComparisonOptimized(
     const dbIndexes = await collection.indexes();
     const indexes = dbIndexes
       .filter(index => index.name !== "_id_")
-      .map(index => ({
-        fields: Object.entries(index.key).map(([field, direction]) => ({
-          field,
-          direction: direction as 1 | -1,
-        })),
-        unique: index.unique || false,
-        sparse: index.sparse || false,
-      }));
+      .map(index => {
+        const normalizedIndex: IndexDefinition = {
+          fields: Object.entries(index.key).map(([field, direction]) => ({
+            field,
+            direction: direction as 1 | -1,
+          })),
+          unique: index.unique || false,
+          sparse: index.sparse || false,
+        };
+
+        // Capture TTL information
+        if (index.expireAfterSeconds !== undefined) {
+          normalizedIndex.expireAfterSeconds = index.expireAfterSeconds;
+        }
+
+        // Capture other index properties
+        if (index.partialFilterExpression) {
+          normalizedIndex.partialFilterExpression =
+            index.partialFilterExpression;
+        }
+        if (index.collation) {
+          normalizedIndex.collation = index.collation;
+        }
+        if (index.name) {
+          normalizedIndex.name = index.name;
+        }
+
+        return normalizedIndex;
+      });
 
     collections[collection.collectionName] = { fields, indexes };
-
-    console.log(
-      `   📊 Collection '${collection.collectionName}': ${
-        Object.keys(fields).length
-      } fields detected (${sampleSize} samples)`
-    );
   } catch (error) {
     errors.push({ collection: collection.collectionName, error });
-    console.error(
-      `[Mongeese] Failed to snapshot collection '${collection.collectionName}':`,
-      error
-    );
+    // console.error(
+    //   `[Mongeese] Failed to snapshot collection '${collection.collectionName}':`,
+    //   error
+    // );
   }
 }
 
@@ -355,71 +413,69 @@ export function generateSnapshotHash(snapshot: Snapshot): string {
   return createHash("sha256").update(serialized).digest("hex");
 }
 
-/**
- * Generates a database snapshot optimized for comparison with code snapshots
- * Automatically filters out Mongoose-managed fields (_id, __v)
- * @param db MongoDB database connection
- * @param version Schema version number
- * @returns Promise<Snapshot>
- */
-export async function generateDatabaseSnapshot(
-  db: Db,
-  version: number = 1
-): Promise<Snapshot> {
-  console.log("[Mongeese] 📊 Generating database snapshot for comparison...");
+// /**
+//  * Generates a database snapshot optimized for comparison with code snapshots
+//  * Automatically filters out Mongoose-managed fields (_id, __v)
+//  * @param db MongoDB database connection
+//  * @param version Schema version number
+//  * @returns Promise<Snapshot>
+//  */
+// export async function generateDatabaseSnapshot(
+//   db: Db,
+//   version: number = 1
+// ): Promise<Snapshot> {
+//   const dbCollections = await db.collections();
 
-  const dbCollections = await db.collections();
+//   // Exclude Mongeese's own collections
+//   const filteredCollections = dbCollections.filter(
+//     c =>
+//       c.collectionName !== "mongeese.snapshots" && // Keep this filter even though we don't store snapshots anymore
+//       c.collectionName !== "mongeese.migrations"
+//   );
 
-  // Exclude Mongeese's own collections
-  const filteredCollections = dbCollections.filter(
-    c =>
-      c.collectionName !== "mongeese.snapshots" && // Keep this filter even though we don't store snapshots anymore
-      c.collectionName !== "mongeese.migrations"
-  );
+//   const collections: {
+//     [collectionName: string]: CollectionStructure;
+//   } = {};
 
-  const collections: {
-    [collectionName: string]: CollectionStructure;
-  } = {};
+//   const errors: SnapshotError[] = [];
 
-  const errors: SnapshotError[] = [];
+//   // Use concurrency limit for up to 50 collections, otherwise fall back to sequential
+//   if (filteredCollections.length > 50) {
+//     // Too many collections, process sequentially to avoid DB overload
+//     for (const collection of filteredCollections) {
+//       await snapCollectionForComparison(collections, collection, errors);
+//     }
+//   } else {
+//     // Use p-limit to control concurrency (limit to 5 at a time)
+//     const limit = pLimit(5);
 
-  // Use concurrency limit for up to 50 collections, otherwise fall back to sequential
-  if (filteredCollections.length > 50) {
-    // Too many collections, process sequentially to avoid DB overload
-    for (const collection of filteredCollections) {
-      await snapCollectionForComparison(collections, collection, errors);
-    }
-  } else {
-    // Use p-limit to control concurrency (limit to 5 at a time)
-    const limit = pLimit(5);
+//     await Promise.all(
+//       filteredCollections.map(collection =>
+//         limit(async () => {
+//           await snapCollectionForComparison(collections, collection, errors);
+//         })
+//       )
+//     );
+//   }
 
-    await Promise.all(
-      filteredCollections.map(collection =>
-        limit(async () => {
-          await snapCollectionForComparison(collections, collection, errors);
-        })
-      )
-    );
-  }
+//   if (errors.length > 0) {
+//     console.warn(
+//       `[Mongeese] Database snapshot completed with ${errors.length} collection errors.`
+//     );
+//   }
 
-  if (errors.length > 0) {
-    console.warn(
-      `[Mongeese] Database snapshot completed with ${errors.length} collection errors.`
-    );
-  }
+//   const snapshot: Snapshot = {
+//     version,
+//     hash: "",
+//     collections,
+//     createdAt: new Date(),
+//   };
 
-  const snapshot: Snapshot = {
-    version,
-    hash: "",
-    collections,
-    createdAt: new Date(),
-  };
+//   // Generate hash after creating the snapshot
+//   snapshot.hash = generateSnapshotHash(snapshot);
 
-  // Generate hash after creating the snapshot
-  snapshot.hash = generateSnapshotHash(snapshot);
-
-  return snapshot;
-}
+//   return snapshot;
+// }
 
 // Smart Collection Filtering and Prioritization
 // This is the best balance of performance, safety, and simplicity
@@ -434,15 +490,14 @@ export async function generateDatabaseSnapshotSmart(
   } = {}
 ): Promise<Snapshot> {
   const {
-    skipEmpty = true,
+    skipEmpty = false,
     prioritizeBySize = true,
     maxConcurrency = 10,
     sampleSize = 30,
   } = options;
 
-  console.log("[Mongeese] 📊 Generating smart database snapshot...");
-
   const dbCollections = await db.collections();
+
   let filteredCollections = dbCollections.filter(
     c =>
       c.collectionName !== "mongeese.snapshots" &&
@@ -451,14 +506,14 @@ export async function generateDatabaseSnapshotSmart(
 
   // Get collection stats for smart processing
   if (skipEmpty || prioritizeBySize) {
-    console.log("[Mongeese] Gathering collection statistics...");
-
     const statsLimit = pLimit(15); // Higher limit for lightweight stats queries
+
     const collectionStats = await Promise.all(
       filteredCollections.map(collection =>
         statsLimit(async () => {
           try {
             const count = await collection.estimatedDocumentCount();
+
             return {
               collection,
               count,
@@ -466,11 +521,7 @@ export async function generateDatabaseSnapshotSmart(
             };
           } catch (error) {
             // If count fails, assume non-empty to be safe
-            return {
-              collection,
-              count: 1,
-              size: 1,
-            };
+            return { collection, count: 1, size: 1 };
           }
         })
       )
@@ -485,9 +536,7 @@ export async function generateDatabaseSnapshotSmart(
 
     // Sort by size (largest first) for better progress feedback
     if (prioritizeBySize && collectionStats.length > 0) {
-      const sortedStats = collectionStats
-        .filter(stat => stat.count > 0)
-        .sort((a, b) => b.count - a.count);
+      const sortedStats = collectionStats.sort((a, b) => b.count - a.count);
 
       filteredCollections = sortedStats.map(stat => stat.collection);
     }
@@ -505,18 +554,9 @@ export async function generateDatabaseSnapshotSmart(
 
   const limit = pLimit(concurrency);
 
-  console.log(
-    `[Mongeese] Processing ${filteredCollections.length} collections with concurrency ${concurrency}`
-  );
-
   await Promise.all(
-    filteredCollections.map((collection, index) =>
+    filteredCollections.map(collection =>
       limit(async () => {
-        // if (index % 25 === 0) {
-        //   console.log(
-        //     `[Mongeese] Progress: ${index}/${filteredCollections.length} collections processed`
-        //   );
-        // }
         await snapCollectionForComparisonOptimized(
           collections,
           collection,
