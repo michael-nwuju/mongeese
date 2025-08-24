@@ -182,6 +182,140 @@ async function snapCollectionForComparison(
   }
 }
 
+async function snapCollectionForComparisonOptimized(
+  collections: { [collectionName: string]: CollectionStructure },
+  collection: Collection<Document>,
+  errors: SnapshotError[],
+  sampleSize: number = 25 // Reduced from 50 for faster processing
+) {
+  try {
+    // Use a more efficient aggregation pipeline
+    const samples = await collection
+      .aggregate([
+        { $sample: { size: sampleSize } },
+        // Project only the fields we need to reduce data transfer
+        { $project: { _id: 0, __v: 0 } },
+      ])
+      .toArray();
+
+    if (samples.length === 0) {
+      return (collections[collection.collectionName] = {
+        fields: {},
+        indexes: [],
+      });
+    }
+
+    const fields: { [fieldName: string]: FieldDefinition } = {};
+    const fieldInfo: { [fieldName: string]: DatabaseFieldInfo } = {};
+
+    // Pre-allocate field tracking for better performance
+    const allPaths = new Set<string>();
+
+    // First pass: collect all possible field paths
+    for (const doc of samples) {
+      const hasNestedObjects = hasNestedStructure(doc);
+      let docFields: { [path: string]: any } = {};
+
+      if (hasNestedObjects) {
+        flatten(doc, "", docFields);
+      } else {
+        docFields = doc;
+      }
+
+      // Filter out Mongoose-managed fields and collect paths
+      Object.keys(docFields)
+        .filter(fieldName => !MONGOOSE_MANAGED_FIELDS.has(fieldName))
+        .forEach(path => allPaths.add(path));
+    }
+
+    // Initialize field info for all discovered paths
+    for (const path of allPaths) {
+      fieldInfo[path] = {
+        exists: false,
+        hasNullValues: false,
+        hasUndefinedValues: false,
+        sampleCount: 0,
+        presentCount: 0,
+      };
+    }
+
+    // Second pass: update field presence info
+    for (const doc of samples) {
+      const hasNestedObjects = hasNestedStructure(doc);
+      let docFields: { [path: string]: any } = {};
+
+      if (hasNestedObjects) {
+        flatten(doc, "", docFields);
+      } else {
+        docFields = doc;
+      }
+
+      const filteredFields = Object.fromEntries(
+        Object.entries(docFields).filter(
+          ([fieldName]) => !MONGOOSE_MANAGED_FIELDS.has(fieldName)
+        )
+      );
+
+      // Update all tracked fields
+      for (const [path, info] of Object.entries(fieldInfo)) {
+        info.sampleCount++;
+
+        if (path in filteredFields) {
+          info.presentCount++;
+          info.exists = true;
+
+          const value = filteredFields[path];
+          if (value === null) {
+            info.hasNullValues = true;
+          }
+          if (value === undefined) {
+            info.hasUndefinedValues = true;
+          }
+        }
+      }
+    }
+
+    // Create field definitions (same as before)
+    for (const [fieldName, info] of Object.entries(fieldInfo)) {
+      const isRequiredInDb = info.presentCount === info.sampleCount;
+      const isNullableInDb = info.hasNullValues || info.hasUndefinedValues;
+
+      fields[fieldName] = {
+        type: "Mixed",
+        nullable: isNullableInDb,
+        required: isRequiredInDb,
+      };
+    }
+
+    // Get indexes (cached for performance)
+    const dbIndexes = await collection.indexes();
+    const indexes = dbIndexes
+      .filter(index => index.name !== "_id_")
+      .map(index => ({
+        fields: Object.entries(index.key).map(([field, direction]) => ({
+          field,
+          direction: direction as 1 | -1,
+        })),
+        unique: index.unique || false,
+        sparse: index.sparse || false,
+      }));
+
+    collections[collection.collectionName] = { fields, indexes };
+
+    console.log(
+      `   📊 Collection '${collection.collectionName}': ${
+        Object.keys(fields).length
+      } fields detected (${sampleSize} samples)`
+    );
+  } catch (error) {
+    errors.push({ collection: collection.collectionName, error });
+    console.error(
+      `[Mongeese] Failed to snapshot collection '${collection.collectionName}':`,
+      error
+    );
+  }
+}
+
 // Keep the same serialization and hashing functions for in-memory snapshots
 function serializeSnapshot(snapshot: Snapshot): string {
   const { _id, hash, createdAt, ...content } = snapshot;
@@ -287,6 +421,129 @@ export async function generateDatabaseSnapshot(
   return snapshot;
 }
 
+// Smart Collection Filtering and Prioritization
+// This is the best balance of performance, safety, and simplicity
+export async function generateDatabaseSnapshotSmart(
+  db: Db,
+  version: number = 1,
+  options: {
+    skipEmpty?: boolean;
+    prioritizeBySize?: boolean;
+    maxConcurrency?: number;
+    sampleSize?: number;
+  } = {}
+): Promise<Snapshot> {
+  const {
+    skipEmpty = true,
+    prioritizeBySize = true,
+    maxConcurrency = 10,
+    sampleSize = 30,
+  } = options;
+
+  console.log("[Mongeese] 📊 Generating smart database snapshot...");
+
+  const dbCollections = await db.collections();
+  let filteredCollections = dbCollections.filter(
+    c =>
+      c.collectionName !== "mongeese.snapshots" &&
+      c.collectionName !== "mongeese.migrations"
+  );
+
+  // Get collection stats for smart processing
+  if (skipEmpty || prioritizeBySize) {
+    console.log("[Mongeese] Gathering collection statistics...");
+
+    const statsLimit = pLimit(15); // Higher limit for lightweight stats queries
+    const collectionStats = await Promise.all(
+      filteredCollections.map(collection =>
+        statsLimit(async () => {
+          try {
+            const count = await collection.estimatedDocumentCount();
+            return {
+              collection,
+              count,
+              size: count, // Use count as a proxy for size since we can't get actual size easily
+            };
+          } catch (error) {
+            // If count fails, assume non-empty to be safe
+            return {
+              collection,
+              count: 1,
+              size: 1,
+            };
+          }
+        })
+      )
+    );
+
+    // Filter out empty collections if requested
+    if (skipEmpty) {
+      const nonEmptyStats = collectionStats.filter(stat => stat.count > 0);
+
+      filteredCollections = nonEmptyStats.map(stat => stat.collection);
+    }
+
+    // Sort by size (largest first) for better progress feedback
+    if (prioritizeBySize && collectionStats.length > 0) {
+      const sortedStats = collectionStats
+        .filter(stat => stat.count > 0)
+        .sort((a, b) => b.count - a.count);
+
+      filteredCollections = sortedStats.map(stat => stat.collection);
+    }
+  }
+
+  const collections: { [collectionName: string]: CollectionStructure } = {};
+
+  const errors: SnapshotError[] = [];
+
+  // Use adaptive concurrency
+  const concurrency = Math.min(
+    maxConcurrency,
+    Math.max(2, filteredCollections.length)
+  );
+
+  const limit = pLimit(concurrency);
+
+  console.log(
+    `[Mongeese] Processing ${filteredCollections.length} collections with concurrency ${concurrency}`
+  );
+
+  await Promise.all(
+    filteredCollections.map((collection, index) =>
+      limit(async () => {
+        // if (index % 25 === 0) {
+        //   console.log(
+        //     `[Mongeese] Progress: ${index}/${filteredCollections.length} collections processed`
+        //   );
+        // }
+        await snapCollectionForComparisonOptimized(
+          collections,
+          collection,
+          errors,
+          sampleSize
+        );
+      })
+    )
+  );
+
+  if (errors.length > 0) {
+    console.warn(
+      `[Mongeese] Database snapshot completed with ${errors.length} collection errors.`
+    );
+  }
+
+  const snapshot: Snapshot = {
+    version,
+    hash: "",
+    collections,
+    createdAt: new Date(),
+  };
+
+  snapshot.hash = generateSnapshotHash(snapshot);
+  return snapshot;
+}
+
 /**
  * Verifies that a snapshot's hash matches its content
  * @param snapshot The snapshot to verify
@@ -305,5 +562,6 @@ export async function generateSnapshot(
   // console.warn(
   //   "[Mongeese] ⚠️  generateSnapshot is deprecated. Use generateDatabaseSnapshot for comparison or generateSnapshotFromCodebase for accurate schema detection."
   // );
-  return generateDatabaseSnapshot(db, version);
+  // return generateDatabaseSnapshot(db, version);
+  return generateDatabaseSnapshotSmart(db, version);
 }
