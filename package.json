@@ -30,7 +30,7 @@
   "bugs": {
     "url": "https://github.com/michael-nwuju/mongeese/issues"
   },
-  "homepage": "https://github.com/michael-nwuju/mongeese#readme",
+  "homepage": "https://michael-nwuju.github.io/mongeese",
   "dependencies": {
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
