@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mongeese CLI - MongoDB Migration Tool</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+      rel="stylesheet"
+    />
+
+    <meta
+      name="description"
+      content="Mongeese CLI is an open-source MongoDB migration tool for Mongoose and NestJS. Auto-generate migration scripts, prevent schema drift, and manage schema changes safely."
+    />
+    <meta
+      name="keywords"
+      content="mongeese, mongeese-cli, mongo, mongodb, mongoose, migration, migrations, nest, nestjs, schema, drift, database, migrations, nodejs, cli"
+    />
+    <meta name="author" content="Michael Nwuju" />
+    <meta property="og:title" content="Mongeese CLI - MongoDB Migration Tool" />
+    <meta
+      property="og:description"
+      content="Auto-generate MongoDB migration scripts by detecting changes in your Mongoose schemas. Prevent schema drift, enable safe rollbacks, and CI/CD integration."
+    />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:url"
+      content="https://github.com/michael-nwuju/mongeese"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Mongeese CLI - MongoDB Migration Tool"
+    />
+    <meta
+      name="twitter:description"
+      content="Open-source MongoDB migration tool for Mongoose and NestJS. Prevent schema drift, generate migrations automatically, and integrate with CI/CD."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Mongeese CLI",
+        "description": "Open-source MongoDB migration tool that auto-generates migration scripts by detecting schema changes in Mongoose models.",
+        "applicationCategory": "DeveloperTool",
+        "operatingSystem": "Cross-platform",
+        "programmingLanguage": "JavaScript",
+        "author": {
+          "@type": "Person",
+          "name": "Michael Nwuju"
+        },
+        "url": "https://github.com/michael-nwuju/mongeese",
+        "downloadUrl": "https://www.npmjs.com/package/mongeese-cli"
+      }
+    </script>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, sans-serif;
+        line-height: 1.6;
+        color: #334155;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem;
+      }
+
+      .header {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        padding: 2rem 0;
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+
+      .hero-title {
+        font-size: 3.5rem;
+        font-weight: 700;
+        color: white;
+        margin-bottom: 1rem;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .hero-subtitle {
+        font-size: 1.25rem;
+        color: rgba(255, 255, 255, 0.9);
+        margin-bottom: 2rem;
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .badges {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 2rem;
+      }
+
+      .badge {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 25px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+
+      .main-content {
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        margin-bottom: 3rem;
+      }
+
+      .nav-tabs {
+        display: flex;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+        overflow-x: auto;
+      }
+
+      .nav-tab {
+        background: none;
+        border: none;
+        padding: 1rem 2rem;
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 500;
+        color: #64748b;
+        border-bottom: 3px solid transparent;
+        transition: all 0.3s ease;
+        white-space: nowrap;
+      }
+
+      .nav-tab.active {
+        color: #667eea;
+        border-bottom-color: #667eea;
+        background: white;
+      }
+
+      .nav-tab:hover:not(.active) {
+        color: #475569;
+        background: #f1f5f9;
+      }
+
+      .tab-content {
+        display: none;
+        padding: 3rem;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .section-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .section-subtitle {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #475569;
+        margin: 2rem 0 1rem 0;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2rem;
+        margin: 2rem 0;
+      }
+
+      .feature-card {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        border: 1px solid #e2e8f0;
+        transition: all 0.3s ease;
+      }
+
+      .feature-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      }
+
+      .feature-icon {
+        font-size: 2rem;
+        margin-bottom: 1rem;
+      }
+
+      .feature-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 0.5rem;
+      }
+
+      .feature-description {
+        color: #64748b;
+        line-height: 1.6;
+      }
+
+      .code-block {
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 1.5rem;
+        border-radius: 10px;
+        font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+        font-size: 0.9rem;
+        overflow-x: auto;
+        margin: 1rem 0;
+        border: 1px solid #334155;
+      }
+
+      .code-block .comment {
+        color: #94a3b8;
+      }
+
+      .code-block .command {
+        color: #22d3ee;
+        display: block;
+      }
+
+      .code-block .string {
+        color: #a3e635;
+      }
+
+      .workflow-steps {
+        display: grid;
+        gap: 1.5rem;
+        margin: 2rem 0;
+      }
+
+      .workflow-step {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #fefefe 0%, #f8fafc 100%);
+        border-radius: 12px;
+        border-left: 4px solid #667eea;
+      }
+
+      .step-number {
+        background: #667eea;
+        color: white;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .step-content h4 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 0.5rem;
+      }
+
+      .step-content p {
+        color: #64748b;
+      }
+
+      .command-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 2rem 0;
+        background: white;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+      }
+
+      .command-table th,
+      .command-table td {
+        padding: 1rem;
+        text-align: left;
+        border-bottom: 1px solid #e2e8f0;
+      }
+
+      .command-table th {
+        background: #f8fafc;
+        font-weight: 600;
+        color: #374151;
+      }
+
+      .command-table code {
+        background: #f1f5f9;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+        font-size: 0.85rem;
+        color: #1e293b;
+      }
+
+      .alert {
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin: 1.5rem 0;
+        border-left: 4px solid;
+      }
+
+      .alert-warning {
+        background: #fef3cd;
+        border-color: #f59e0b;
+        color: #92400e;
+      }
+
+      .alert-info {
+        background: #dbeafe;
+        border-color: #3b82f6;
+        color: #1e40af;
+      }
+
+      .quick-start {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 15px;
+        margin: 2rem 0;
+      }
+
+      .quick-start h3 {
+        margin-bottom: 1rem;
+        font-size: 1.5rem;
+      }
+
+      .quick-start .code-block {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      @media (max-width: 768px) {
+        .hero-title {
+          font-size: 2.5rem;
+        }
+
+        .tab-content {
+          padding: 2rem 1rem;
+        }
+
+        .feature-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="container">
+        <h1 class="hero-title">🧬 Mongeese CLI</h1>
+        <p class="hero-subtitle">
+          Auto-generate MongoDB migration scripts by detecting changes in your
+          Mongoose schemas
+        </p>
+        <div class="badges">
+          <span class="badge">MongoDB</span>
+          <span class="badge">Mongoose</span>
+          <span class="badge">Migrations</span>
+          <span class="badge">NestJS</span>
+        </div>
+        <p>
+          Built with ❤️ for the
+          <a href="https://mongodb.com" style="color: rgba(255, 255, 255, 0.9)">
+            MongoDB</a
+          >
+          &
+          <a
+            href="https://mongoosejs.com"
+            style="color: rgba(255, 255, 255, 0.9)"
+          >
+            Mongoose</a
+          >
+          community.
+        </p>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="main-content">
+        <nav class="nav-tabs">
+          <button class="nav-tab active" onclick="showTab('overview')">
+            Overview
+          </button>
+          <button class="nav-tab" onclick="showTab('installation')">
+            Installation
+          </button>
+          <button class="nav-tab" onclick="showTab('commands')">
+            Commands
+          </button>
+          <!-- <button class="nav-tab" onclick="showTab('workflow')">
+            Workflow
+          </button> -->
+          <button class="nav-tab" onclick="showTab('configuration')">
+            Configuration
+          </button>
+          <!-- <button class="nav-tab" onclick="showTab('examples')">
+            Examples
+          </button> -->
+        </nav>
+
+        <!-- Overview Tab -->
+        <div id="overview" class="tab-content active">
+          <h2 class="section-title">🎯 Why Mongeese CLI?</h2>
+
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">🚀</div>
+              <h3 class="feature-title">Auto-Generate Migrations</h3>
+              <p class="feature-description">
+                Eliminate manual migration scripts by automatically detecting
+                schema changes between your code and database.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">🛡️</div>
+              <h3 class="feature-title">Prevent Schema Drift</h3>
+              <p class="feature-description">
+                Track all changes between your Mongoose models and database to
+                prevent silent schema inconsistencies.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">⚡</div>
+              <h3 class="feature-title">NestJS Integration</h3>
+              <p class="feature-description">
+                Seamlessly works with NestJS and Mongoose projects with
+                automatic model detection.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">🔄</div>
+              <h3 class="feature-title">Safe Rollbacks</h3>
+              <p class="feature-description">
+                Generate both up and down migration commands for safe rollback
+                operations.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">🧩</div>
+              <h3 class="feature-title">CI/CD Ready</h3>
+              <p class="feature-description">
+                Version-controlled migration files perfect for deployment
+                pipelines and team collaboration.
+              </p>
+            </div>
+
+            <div class="feature-card">
+              <div class="feature-icon">⚙️</div>
+              <h3 class="feature-title">Framework Agnostic</h3>
+              <p class="feature-description">
+                Works great with NestJS but is framework-agnostic - use with any
+                Node.js MongoDB project.
+              </p>
+            </div>
+          </div>
+
+          <div class="quick-start">
+            <h3>🚀 Quick Start</h3>
+            <div class="code-block">
+              <span class="comment"># Set up migration tracking</span>
+              <span class="command">npx mongeese-cli init</span><br />
+              <span class="comment"
+                ># Detect changes and generate migration</span
+              >
+              <span class="command">npx mongeese-cli generate</span><br />
+              <span class="comment"># Apply pending migrations</span>
+              <span class="command">npx mongeese-cli migrate up</span><br />
+              <span class="comment"># Show migration status</span>
+              <span class="command">npx mongeese-cli migrate status</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Installation Tab -->
+        <div id="installation" class="tab-content">
+          <h2 class="section-title">📦 Installation</h2>
+
+          <h3 class="section-subtitle">Global Installation</h3>
+          <p>
+            Install globally to use the <code>mongeese</code> command anywhere:
+          </p>
+
+          <div class="code-block">
+            <span class="comment"># Using npm</span>
+            <span class="command">npm install -g mongeese-cli</span><br />
+
+            <span class="comment"># Using yarn</span>
+            <span class="command">yarn global add mongeese-cli</span>
+          </div>
+
+          <h3 class="section-subtitle">Using npx (Recommended)</h3>
+          <p>No installation required - run commands directly:</p>
+
+          <div class="code-block">
+            <span class="command">npx mongeese-cli &lt;command&gt;</span>
+          </div>
+
+          <h3 class="section-subtitle">Requirements</h3>
+          <div class="alert alert-info">
+            <strong>System Requirements:</strong>
+            <ul style="margin: 0.5rem 0 0 1rem">
+              <li>Node.js >= 16</li>
+              <li>Mongoose >= 7</li>
+              <li>Active MongoDB connection</li>
+            </ul>
+          </div>
+
+          <div class="alert alert-warning">
+            <strong>Framework Compatibility:</strong><br />
+            Works great with NestJS but is framework-agnostic. Compatible with
+            any Node.js project using Mongoose.
+          </div>
+        </div>
+
+        <!-- Commands Tab -->
+        <div id="commands" class="tab-content">
+          <h2 class="section-title">🛠 Commands</h2>
+
+          <table class="command-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Description</th>
+                <th>Options</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>mongeese init</code></td>
+                <td>
+                  Initialize Mongeese in your project and create connection
+                  configuration
+                </td>
+                <td>None</td>
+              </tr>
+              <tr>
+                <td><code>mongeese generate</code></td>
+                <td>
+                  Generate migration file by comparing schemas with database
+                  state
+                </td>
+                <td>
+                  <code>-n, --name &lt;name&gt;</code><br />Custom migration
+                  name
+                </td>
+              </tr>
+              <tr>
+                <td><code>mongeese migrate</code></td>
+                <td>Show migration status (default)</td>
+                <td>None</td>
+              </tr>
+              <tr>
+                <td><code>mongeese migrate up</code></td>
+                <td>Apply all pending migrations</td>
+                <td>
+                  <code>-t, --target &lt;target&gt;</code><br />Target migration
+                  filename
+                </td>
+              </tr>
+              <tr>
+                <td><code>mongeese migrate down</code></td>
+                <td>Rollback last migration</td>
+                <td>
+                  <code>-t, --target &lt;target&gt;</code><br />Target migration
+                  filename
+                </td>
+              </tr>
+              <tr>
+                <td><code>mongeese migrate status</code></td>
+                <td>Show detailed migration status and history</td>
+                <td>None</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3 class="section-subtitle">Command Examples</h3>
+
+          <div class="code-block">
+            <span class="comment"># Generate migration with custom name</span>
+            <span class="command"
+              >mongeese generate --name add_user_preferences</span
+            >
+            <span class="command">mongeese generate -n create_indexes</span
+            ><br />
+
+            <span class="comment"># Rollback to specific migration</span>
+            <span class="command"
+              >mongeese migrate down --target 20240501_120000_add_users</span
+            ><br />
+
+            <span class="comment"># Check what migrations are pending</span>
+            <span class="command">mongeese migrate status</span>
+          </div>
+        </div>
+
+        <!-- Workflow Tab -->
+        <!-- <div id="workflow" class="tab-content">
+          <h2 class="section-title">🔄 How It Works</h2>
+
+          <div class="workflow-steps">
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Initialize Project</h4>
+                <p>
+                  Run <code>mongeese init</code> to set up your database
+                  connection configuration file.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Develop Schemas</h4>
+                <p>
+                  Make changes to your Mongoose schemas as usual - add fields,
+                  modify types, create new models, etc.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Generate Migration</h4>
+                <p>
+                  Run <code>mongeese generate</code> to create a migration file
+                  by comparing your code with the database.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Review & Edit</h4>
+                <p>
+                  Check the generated migration commands and edit if necessary
+                  to add custom logic.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Apply Migration</h4>
+                <p>
+                  Run <code>mongeese migrate up</code> to execute the migration
+                  against your database.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">6</div>
+              <div class="step-content">
+                <h4>Deploy</h4>
+                <p>
+                  Commit migration files to version control and run in other
+                  environments.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="alert alert-info">
+            <strong>How Detection Works:</strong><br />
+            Mongeese compares your current Mongoose model definitions with the
+            actual database structure to detect changes, then generates
+            appropriate MongoDB commands to sync them.
+          </div>
+        </div> -->
+
+        <!-- Configuration Tab -->
+        <div id="configuration" class="tab-content">
+          <h2 class="section-title">🔧 Configuration</h2>
+
+          <p>
+            After running <code>mongeese init</code>, you'll get a connection
+            file that you need to configure:
+          </p>
+
+          <h3 class="section-subtitle">TypeScript Projects</h3>
+          <div class="code-block">
+            <span class="comment">// mongeese.connection.ts</span><br />
+            <span class="string">import</span> { MongoClient, Db }
+            <span class="string">from</span>
+            <span class="string">"mongodb"</span>;<br />
+            <span class="string">import</span> *
+            <span class="string">as</span> dotenv
+            <span class="string">from</span>
+            <span class="string">"dotenv"</span>;<br />
+            <br />
+            dotenv?.config();<br />
+            <br />
+            <span class="comment"
+              >// DbWithClient type that extends Db with an attached client
+              property</span
+            ><br />
+            <span class="string">export interface</span> DbWithClient
+            <span class="string">extends</span> Db {<br />
+            &nbsp;&nbsp;client: MongoClient;<br />
+            }<br />
+            <br />
+            <span class="comment"
+              >/** Factory function that returns a DbWithClient object with the
+              client attached */</span
+            ><br />
+            <span class="string">export async function</span>
+            getDbWithClient(dbName?: <span class="string">string</span>):
+            Promise&lt;DbWithClient&gt; {<br />
+            &nbsp;&nbsp;<span class="string">const</span> client =
+            <span class="string">new</span>
+            MongoClient(process.env.MONGODB_URI);<br /><br />
+            &nbsp;&nbsp;<span class="string">await</span>
+            client.connect();<br /><br />
+            &nbsp;&nbsp;<span class="string">const</span> db =
+            client.db(dbName);<br /><br />
+            &nbsp;&nbsp;(db <span class="string">as</span> DbWithClient).client
+            = client;<br /><br />
+            &nbsp;&nbsp;<span class="string">return</span> db
+            <span class="string">as</span> DbWithClient;<br /><br />
+            }<br />
+          </div>
+
+          <h3 class="section-subtitle">JavaScript Projects</h3>
+          <div class="code-block">
+            <span class="comment">// mongeese.connection.js</span><br />
+            <span class="string">import</span> { MongoClient }
+            <span class="string">from</span>
+            <span class="string">"mongodb"</span>;<br />
+            <span class="string">import</span> *
+            <span class="string">as</span> dotenv
+            <span class="string">from</span>
+            <span class="string">"dotenv"</span>;<br />
+            <br />
+            dotenv?.config();<br />
+            <br />
+            <span class="comment"
+              >/** Factory function that returns a DbWithClient object with the
+              client attached */</span
+            ><br />
+            <span class="string">export async function</span>
+            getDbWithClient(dbName) {<br />
+            &nbsp;&nbsp;<span class="string">const</span> client =
+            <span class="string">new</span>
+            MongoClient(process.env.MONGODB_URI);<br /><br />
+            &nbsp;&nbsp;<span class="string">await</span>
+            client.connect();<br /><br />
+            &nbsp;&nbsp;<span class="string">const</span> db =
+            client.db(dbName);<br /><br />
+            &nbsp;&nbsp;db.client = client;<br /><br />
+            &nbsp;&nbsp;<span class="string">return</span> db;<br /><br />
+            }<br />
+          </div>
+
+          <h3 class="section-subtitle">Environment Variables</h3>
+          <p>Make sure to set your MongoDB connection URI:</p>
+
+          <div class="code-block">
+            <span class="comment"># .env file</span><br />
+            <span class="string">MONGODB_URI</span
+            >=mongodb://localhost:27017/your-database <br /><br />
+            <span class="comment"># or for MongoDB Atlas</span><br />
+            <span class="string">MONGODB_URI</span
+            >=mongodb+srv://username:password@cluster.mongodb.net/database
+          </div>
+
+          <div class="alert alert-warning">
+            <strong>Important:</strong> Ensure your database is accessible when
+            running Mongeese commands, as the tool needs to compare live
+            database state with your code.
+          </div>
+        </div>
+
+        <!-- Examples Tab -->
+        <!-- <div id="examples" class="tab-content">
+          <h2 class="section-title">📝 Example Workflow</h2>
+
+          <div class="workflow-steps">
+            <div class="workflow-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Initialize Project</h4>
+                <div class="code-block">
+                  <span class="command">mongeese init</span>
+                  <span class="comment"
+                    ># Creates mongeese.connection.ts (or .js)</span
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Configure Connection</h4>
+                <p>
+                  Edit the connection file and add your
+                  <code>MONGODB_URI</code> to your environment variables.
+                </p>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Make Schema Changes</h4>
+                <div class="code-block">
+                  <span class="comment"
+                    >// Add new fields to your Mongoose schemas</span
+                  >
+                  <span class="string">const</span> UserSchema =
+                  <span class="string">new</span> Schema({ name:
+                  <span class="string">String</span>, email:
+                  <span class="string">String</span>, age:
+                  <span class="string">Number</span>,
+                  <span class="comment">// New field</span> preferences: {
+                  <span class="comment">// New nested object</span> theme:
+                  <span class="string">String</span>, notifications:
+                  <span class="string">Boolean</span>
+                  } });
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h4>Generate Migration</h4>
+                <div class="code-block">
+                  <span class="command"
+                    >mongeese generate --name add_user_preferences</span
+                  >
+
+                  <span class="comment"># Output:</span>
+                  🔍 Generating migration... ✅ Database connection established
+                  ✅ Detected changes: • Collections modified: users 📝
+                  Generating migration file... ✅ Migration file created:
+                  migrations/20240825_143022_add_user_preferences.js
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">5</div>
+              <div class="step-content">
+                <h4>Review Migration File</h4>
+                <div class="code-block">
+                  <span class="comment"
+                    >// migrations/20240825_143022_add_user_preferences.js</span
+                  >
+                  <span class="string">module.exports</span> = {
+                  <span class="string">async</span> up(db) {
+                  <span class="comment"
+                    >// Add age field with default value</span
+                  >
+                  <span class="string">await</span> db.collection(<span
+                    class="string"
+                    >'users'</span
+                  >).updateMany( { age: { $exists:
+                  <span class="string">false</span> } }, { $set: { age:
+                  <span class="string">null</span> } } );
+
+                  <span class="comment">// Add preferences object</span>
+                  <span class="string">await</span> db.collection(<span
+                    class="string"
+                    >'users'</span
+                  >).updateMany( { preferences: { $exists:
+                  <span class="string">false</span> } }, { $set: { preferences:
+                  {} } } ); },
+
+                  <span class="string">async</span> down(db) {
+                  <span class="comment">// Remove added fields</span>
+                  <span class="string">await</span> db.collection(<span
+                    class="string"
+                    >'users'</span
+                  >).updateMany( {}, { $unset: { age:
+                  <span class="string">""</span>, preferences:
+                  <span class="string">""</span> } } ); } };
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">6</div>
+              <div class="step-content">
+                <h4>Apply Migration</h4>
+                <div class="code-block">
+                  <span class="command">mongeese migrate up</span>
+
+                  <span class="comment"># Output:</span>
+                  ✅ Database connection established 📋 Applying migrations...
+                  ✅ Applied: 20240825_143022_add_user_preferences.js (156ms) 🎉
+                  All migrations applied successfully!
+                </div>
+              </div>
+            </div>
+
+            <div class="workflow-step">
+              <div class="step-number">7</div>
+              <div class="step-content">
+                <h4>Check Status</h4>
+                <div class="code-block">
+                  <span class="command">mongeese migrate status</span>
+
+                  <span class="comment"># Output:</span>
+                  ✅ Database connection established 📋 Migration Status: ✅
+                  20240825_143022_add_user_preferences.js (applied 2 minutes
+                  ago) 🎉 Database is up to date!
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <h3 class="section-subtitle">Rollback Example</h3>
+          <div class="code-block">
+            <span class="comment"># Rollback the last migration</span>
+            <span class="command">mongeese migrate down</span>
+
+            <span class="comment"># Rollback to a specific migration</span>
+            <span class="command"
+              >mongeese migrate down --target
+              20240501_120000_initial_setup</span
+            >
+          </div>
+
+          <div class="alert alert-warning">
+            <strong>Important Notes:</strong>
+            <ul style="margin: 0.5rem 0 0 1rem">
+              <li>Always review generated migrations before applying them</li>
+              <li>Test migrations in a development environment first</li>
+              <li>Keep migration files in version control</li>
+              <li>Ensure your database is accessible when running commands</li>
+              <li>The tool compares live database state with your code</li>
+            </ul>
+          </div>
+
+          <h3 class="section-subtitle">NestJS Integration</h3>
+          <p>
+            Mongeese CLI automatically detects NestJS projects and can bootstrap
+            your application to discover schemas:
+          </p>
+
+          <div class="code-block">
+            <span class="comment"
+              ># Works seamlessly with NestJS @Schema decorators</span
+            >
+            <span class="string">import</span> { Schema, Prop, SchemaFactory }
+            <span class="string">from</span>
+            <span class="string">'@nestjs/mongoose'</span>;
+
+            <span class="string">@Schema()</span>
+            <span class="string">export class</span> User {
+            <span class="string">@Prop({ required: true })</span>
+            name: <span class="string">string</span>;
+
+            <span class="string">@Prop({ required: true, unique: true })</span>
+            email: <span class="string">string</span>;
+
+            <span class="string">@Prop()</span>
+            age: <span class="string">number</span>;
+
+            <span class="string">@Prop({ type: Object })</span>
+            preferences: { theme: <span class="string">string</span>;
+            notifications: <span class="string">boolean</span>; }; }
+
+            <span class="string">export const</span> UserSchema =
+            SchemaFactory.createForClass(User);
+          </div>
+        </div> -->
+      </div>
+
+      <footer
+        style="
+          text-align: center;
+          padding: 3rem 0;
+          color: rgba(255, 255, 255, 0.8);
+        "
+      >
+        <div class="container">
+          <p>
+            &copy; All rights reserved.
+            <span class="footer-year"></span>. Michael Nwuju.
+          </p>
+          <p style="margin-top: 1rem">
+            <a
+              href="https://github.com/michael-nwuju/mongeese"
+              style="color: rgba(255, 255, 255, 0.9)"
+            >
+              📂 GitHub Repository
+            </a>
+            |
+            <a
+              href="https://www.npmjs.com/package/mongeese-cli"
+              style="color: rgba(255, 255, 255, 0.9)"
+            >
+              📦 NPM Package
+            </a>
+          </p>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      const footerYear = document.querySelector(".footer-year");
+
+      if (footerYear) {
+        footerYear.innerHTML = new Date().getFullYear();
+      }
+
+      function showTab(tabName) {
+        // Hide all tab contents
+        const contents = document.querySelectorAll(".tab-content");
+        contents.forEach(content => content.classList.remove("active"));
+
+        // Remove active class from all tabs
+        const tabs = document.querySelectorAll(".nav-tab");
+        tabs.forEach(tab => tab.classList.remove("active"));
+
+        // Show selected tab content
+        document.getElementById(tabName).classList.add("active");
+
+        // Add active class to clicked tab
+        event.target.classList.add("active");
+      }
+
+      // Add smooth scrolling for better UX
+      document.addEventListener("DOMContentLoaded", function () {
+        // Add copy code functionality
+        const codeBlocks = document.querySelectorAll(".code-block");
+        codeBlocks.forEach((block, index) => {
+          const copyBtn = document.createElement("button");
+          copyBtn.textContent = "Copy";
+          copyBtn.className = "copy-btn";
+          copyBtn.style.cssText = `
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    background: rgba(255, 255, 255, 0.2);
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 0.8rem;
+                    opacity: 0;
+                    transition: opacity 0.3s ease;
+                `;
+
+          block.style.position = "relative";
+          block.appendChild(copyBtn);
+
+          block.addEventListener("mouseenter", () => {
+            copyBtn.style.opacity = "1";
+          });
+
+          block.addEventListener("mouseleave", () => {
+            copyBtn.style.opacity = "0";
+          });
+
+          copyBtn.addEventListener("click", async () => {
+            const text = block.textContent.replace("Copy", "").trim();
+            try {
+              await navigator.clipboard.writeText(text);
+              copyBtn.textContent = "Copied!";
+              setTimeout(() => {
+                copyBtn.textContent = "Copy";
+              }, 2000);
+            } catch (err) {
+              console.error("Failed to copy text: ", err);
+            }
+          });
+        });
+
+        // Add keyboard navigation
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            const activeTab = document.querySelector(".nav-tab.active");
+            const tabs = Array.from(document.querySelectorAll(".nav-tab"));
+            const currentIndex = tabs.indexOf(activeTab);
+
+            let newIndex;
+            if (e.key === "ArrowRight") {
+              newIndex = (currentIndex + 1) % tabs.length;
+            } else {
+              newIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            }
+
+            tabs[newIndex].click();
+          }
+        });
+      });
+
+      // Add scroll animations
+      const observerOptions = {
+        threshold: 0.1,
+        rootMargin: "0px 0px -50px 0px",
+      };
+
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.style.opacity = "1";
+            entry.target.style.transform = "translateY(0)";
+          }
+        });
+      }, observerOptions);
+
+      document.addEventListener("DOMContentLoaded", () => {
+        const animatedElements = document.querySelectorAll(
+          ".feature-card, .workflow-step, .alert"
+        );
+        animatedElements.forEach((el, index) => {
+          el.style.opacity = "0";
+          el.style.transform = "translateY(20px)";
+          el.style.transition = `opacity 0.6s ease ${
+            index * 0.1
+          }s, transform 0.6s ease ${index * 0.1}s`;
+          observer.observe(el);
+        });
+      });
+    </script>
+
+    <style>
+      /* Additional styles for enhanced interactivity */
+      .copy-btn:hover {
+        background: rgba(255, 255, 255, 0.3) !important;
+      }
+
+      .nav-tab:focus {
+        outline: 2px solid #667eea;
+        outline-offset: 2px;
+      }
+
+      .feature-card {
+        cursor: default;
+      }
+
+      .workflow-step {
+        transition: all 0.3s ease;
+      }
+
+      .workflow-step:hover {
+        transform: translateX(10px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+      }
+
+      /* Responsive improvements */
+      @media (max-width: 640px) {
+        .badges {
+          gap: 0.5rem;
+        }
+
+        .badge {
+          font-size: 0.8rem;
+          padding: 0.4rem 0.8rem;
+        }
+
+        .nav-tabs {
+          padding: 0 1rem;
+        }
+
+        .nav-tab {
+          padding: 0.8rem 1rem;
+          font-size: 0.9rem;
+        }
+
+        .command-table {
+          font-size: 0.9rem;
+        }
+
+        .command-table th,
+        .command-table td {
+          padding: 0.8rem 0.5rem;
+        }
+      }
+
+      /* Dark mode support */
+      @media (prefers-color-scheme: dark) {
+        .main-content {
+          background: #1e293b;
+          color: #e2e8f0;
+        }
+
+        .nav-tabs {
+          background: #0f172a;
+          border-color: #334155;
+        }
+
+        .nav-tab.active {
+          background: #1e293b;
+          color: #667eea;
+        }
+
+        .section-title {
+          color: #f1f5f9;
+        }
+
+        .section-subtitle {
+          color: #cbd5e1;
+        }
+
+        .feature-card {
+          background: linear-gradient(135deg, #334155 0%, #475569 100%);
+          border-color: #475569;
+        }
+
+        .feature-title {
+          color: #f1f5f9;
+        }
+
+        .feature-description {
+          color: #cbd5e1;
+        }
+
+        .workflow-step {
+          background: linear-gradient(135deg, #334155 0%, #475569 100%);
+          border-color: #667eea;
+        }
+
+        .step-content h4 {
+          color: #f1f5f9;
+        }
+
+        .step-content p {
+          color: #cbd5e1;
+        }
+
+        .command-table {
+          background: #334155;
+        }
+
+        .command-table th {
+          background: #475569;
+          color: #f1f5f9;
+        }
+
+        .command-table td {
+          border-color: #475569;
+          color: #e2e8f0;
+        }
+
+        .command-table code {
+          background: #475569;
+          color: #f1f5f9;
+        }
+      }
+    </style>
+  </body>
+</html>
