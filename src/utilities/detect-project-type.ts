@@ -1,4 +1,5 @@
 import fs from "fs-extra";
+import { safeJsonParse } from "./security-utils";
 
 export default function detectProjectType(): "typescript" | "javascript" {
   // 1. Check for explicit TypeScript config files (highest priority)
@@ -18,7 +19,10 @@ export default function detectProjectType(): "typescript" | "javascript" {
   // 2. Check package.json for TypeScript dependencies
   if (fs.existsSync("package.json")) {
     try {
-      const packageJson = fs.readJsonSync("package.json");
+      const packageContent = fs.readFileSync("package.json", "utf8");
+
+      const packageJson = safeJsonParse(packageContent);
+
       const deps = {
         ...packageJson.dependencies,
         ...packageJson.devDependencies,

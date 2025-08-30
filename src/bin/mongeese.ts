@@ -6,6 +6,7 @@ import { join } from "path";
 import init from "../commands/init";
 import generate from "../commands/generate";
 import migrate from "../commands/migrate";
+import { validateIdentifier } from "../utilities/security-utils";
 
 const program = new Command();
 
@@ -42,6 +43,10 @@ program
   .description("Generate a migration file")
   .option("-n, --name <name>", "Name for the migration file")
   .action(async cmdObj => {
+    if (cmdObj.name) {
+      cmdObj.name = validateIdentifier(cmdObj.name, "migration");
+    }
+
     await generate({ name: cmdObj.name });
   });
 
@@ -52,6 +57,27 @@ program
   // .option("--dry", "Dry run (no changes will be made)")
   // .option("-f, --force", "Force apply/rollback migrations")
   .action(async (direction = "status", cmdObj) => {
+    const validDirections = ["up", "down", "status"];
+
+    if (!validDirections.includes(direction)) {
+      throw new Error(
+        `Invalid direction "${direction}". Must be one of: ${validDirections.join(
+          ", "
+        )}`
+      );
+    }
+
+    if (cmdObj.target) {
+      if (typeof cmdObj.target !== "string" || cmdObj.target.length === 0) {
+        throw new Error("Target must be a non-empty string");
+      }
+
+      // Basic validation for timestamp format or filename
+      if (!/^[\w\-\.]+$/.test(cmdObj.target)) {
+        throw new Error("Target contains invalid characters");
+      }
+    }
+
     await migrate(direction, {
       target: cmdObj.target,
       dry: !!cmdObj.dry,

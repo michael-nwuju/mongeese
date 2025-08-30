@@ -3,6 +3,7 @@ import path from "path";
 import chalk from "chalk";
 import { Db } from "mongodb";
 import { isESModuleProject } from "../utilities/is-esm-module-project";
+import { safeResolve, validateIdentifier } from "../utilities/security-utils";
 
 export interface MigrationFile {
   filename: string;
@@ -35,6 +36,18 @@ function parseMigrationFilename(filename: string): {
 
   const [, timestamp, name] = match;
 
+  // Validate timestamp format
+  if (!/^\d{8}_\d{6}$/.test(timestamp)) {
+    return null;
+  }
+
+  // Validate migration name
+  try {
+    validateIdentifier(name, "migration");
+  } catch {
+    return null;
+  }
+
   // Generate class name: Migration20250804_120000_add_user_field
   const className = `Migration${timestamp}_${name}`;
 
@@ -49,7 +62,7 @@ function parseMigrationFilename(filename: string): {
  * Get all migration files from the migrations directory
  */
 export async function getMigrationFiles(): Promise<MigrationFile[]> {
-  const migrationsDir = path.join(process.cwd(), "migrations");
+  const migrationsDir = safeResolve(process.cwd(), "migrations");
 
   if (!(await fs.pathExists(migrationsDir))) {
     return [];
@@ -169,6 +182,14 @@ export async function validateMigrationFile(
   const warnings: string[] = [];
 
   try {
+    // Check file size (max 1MB for migration files)
+    const stats = await fs.stat(migrationFile.filepath);
+
+    if (stats.size > 1024 * 1024) {
+      errors.push("Migration file is too large (max 1MB)");
+      return { valid: false, errors, warnings };
+    }
+
     // Read the file content
     const content = await fs.readFile(migrationFile.filepath, "utf8");
 
@@ -250,13 +271,39 @@ export function formatMigrationTimestamp(timestamp: string): string {
   }
 
   const [, year, month, day, hours, minutes, seconds] = match;
+
+  // Validate date components
+  const yearNum = parseInt(year);
+  const monthNum = parseInt(month);
+  const dayNum = parseInt(day);
+  const hoursNum = parseInt(hours);
+  const minutesNum = parseInt(minutes);
+  const secondsNum = parseInt(seconds);
+
+  if (
+    yearNum < 1970 ||
+    yearNum > 9999 ||
+    monthNum < 1 ||
+    monthNum > 12 ||
+    dayNum < 1 ||
+    dayNum > 31 ||
+    hoursNum < 0 ||
+    hoursNum > 23 ||
+    minutesNum < 0 ||
+    minutesNum > 59 ||
+    secondsNum < 0 ||
+    secondsNum > 59
+  ) {
+    return timestamp; // Return original if invalid
+  }
+
   const date = new Date(
-    parseInt(year),
-    parseInt(month) - 1,
-    parseInt(day),
-    parseInt(hours),
-    parseInt(minutes),
-    parseInt(seconds)
+    yearNum,
+    monthNum - 1,
+    dayNum,
+    hoursNum,
+    minutesNum,
+    secondsNum
   );
 
   return date.toLocaleString();

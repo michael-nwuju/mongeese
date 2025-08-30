@@ -12,12 +12,20 @@ import {
 import { MigrateOptions } from "../types";
 import { MigrationStore } from "./store";
 import { createSessionAwareDb } from "../utilities/create-session-aware-db";
+import { maskSensitiveInfo } from "../utilities/security-utils";
 
 /**
  * Get applied migrations from database (now using isApplied in mongeese.migrations)
  */
 export async function getAppliedMigrations(db: Db): Promise<any[]> {
-  return await new MigrationStore(db).getAppliedMigrations();
+  try {
+    return await new MigrationStore(db).getAppliedMigrations();
+  } catch (error) {
+    const maskedError = maskSensitiveInfo(
+      error instanceof Error ? error.message : String(error)
+    );
+    throw new Error(`Failed to get applied migrations: ${maskedError}`);
+  }
 }
 
 /**
@@ -30,13 +38,20 @@ export async function recordMigrationApplied(
   executionTime: number,
   session?: ClientSession
 ): Promise<void> {
-  const store = new MigrationStore(db);
-  await store.setMigrationApplied(
-    migration.filename,
-    direction === "up",
-    executionTime,
-    session
-  );
+  try {
+    const store = new MigrationStore(db);
+    await store.setMigrationApplied(
+      migration.filename,
+      direction === "up",
+      executionTime,
+      session
+    );
+  } catch (error) {
+    const maskedError = maskSensitiveInfo(
+      error instanceof Error ? error.message : String(error)
+    );
+    throw new Error(`Failed to record migration: ${maskedError}`);
+  }
 }
 
 /**
@@ -110,9 +125,13 @@ export async function executeMigration(
         );
       });
     } catch (error: any) {
+      const maskedError = maskSensitiveInfo(error?.message || String(error));
+
       console.error(chalk.yellow("[Mongeese] migration in session failed -"));
-      console.log(`\n${error?.message}:`);
-      console.log({ MigrationExecutionError: error });
+
+      console.log(`\n${maskedError}`);
+
+      throw error;
     } finally {
       await session.endSession();
     }
@@ -163,20 +182,30 @@ export async function executeMigration(
         );
         return;
       } catch (retryError) {
+        const maskedRetryError = maskSensitiveInfo(
+          retryError instanceof Error ? retryError.message : String(retryError)
+        );
+
         console.error(
           chalk.red(
             `   ❌ Migration retry failed after ${Date.now() - startTime}ms:`
           ),
-          retryError
+          maskedRetryError
         );
+
         throw retryError;
       }
     }
 
+    const maskedError = maskSensitiveInfo(
+      error instanceof Error ? error.message : String(error)
+    );
+
     console.error(
       chalk.red(`   ❌ Migration failed after ${executionTime}ms:`),
-      error
+      maskedError
     );
+
     throw error;
   }
 }
@@ -196,6 +225,11 @@ export async function applyMigrations(
     let pendingMigrations = await getPendingMigrations(appliedFilenames);
 
     if (options.target) {
+      // Validate target format
+      if (!/^[\w\-\.]+$/.test(options.target)) {
+        throw new Error("Target contains invalid characters");
+      }
+
       // Filter to only migrations up to the target
       const targetIndex = pendingMigrations.findIndex(
         m => m.filename === options.target || m.timestamp === options.target
@@ -255,9 +289,15 @@ export async function applyMigrations(
         await executeMigration(db, migration, "up", options);
         successCount++;
       } catch (error) {
+        const maskedError = maskSensitiveInfo(
+          error instanceof Error ? error.message : String(error)
+        );
+
         console.error(
           chalk.red(`\n❌ Migration failed: ${migration.filename}`)
         );
+
+        console.error(chalk.red(`   Error: ${maskedError}`));
 
         if (successCount > 0) {
           console.log(
@@ -301,6 +341,11 @@ export async function rollbackMigrations(
   let migrationsToRollback = appliedMigrations.slice().reverse(); // Most recent first
 
   if (options.target) {
+    // Validate target format
+    if (!/^[\w\-\.]+$/.test(options.target)) {
+      throw new Error("Target contains invalid characters");
+    }
+
     // Rollback to a specific target
     const targetIndex = appliedMigrations.findIndex(
       m =>
@@ -348,17 +393,22 @@ export async function rollbackMigrations(
     );
 
     if (!migrationFile) {
-      console.error(
+      return console.error(
         chalk.red(`❌ Migration file not found: ${record.filename}`)
       );
-      continue;
     }
 
     try {
       await executeMigration(db, migrationFile, "down", options);
       successCount++;
     } catch (error) {
+      const maskedError = maskSensitiveInfo(
+        error instanceof Error ? error.message : String(error)
+      );
+
       console.error(chalk.red(`\n❌ Rollback failed: ${record.filename}`));
+
+      console.error(chalk.red(`   Error: ${maskedError}`));
 
       if (successCount > 0) {
         console.log(
@@ -381,49 +431,61 @@ export async function rollbackMigrations(
  * Show migration status
  */
 export async function showMigrationStatus(db: DbWithClient): Promise<void> {
-  const appliedMigrations = await getAppliedMigrations(db);
-
-  const allMigrations = await getMigrationFiles();
-
-  const appliedFilenames = appliedMigrations.map(m => m.filename);
-
-  const pendingMigrations = allMigrations.filter(
-    m => !appliedFilenames.includes(m.filename)
-  );
-
-  console.log(chalk.cyan("\n📊 Migration Status:\n"));
-
-  if (appliedMigrations.length > 0) {
-    console.log(
-      chalk.green(`✅ Applied Migrations (${appliedMigrations.length}):`)
+  try {
+    const appliedMigrations = await getAppliedMigrations(db);
+    const allMigrations = await getMigrationFiles();
+    const appliedFilenames = appliedMigrations.map(m => m.filename);
+    const pendingMigrations = allMigrations.filter(
+      m => !appliedFilenames.includes(m.filename)
     );
-    for (const migration of appliedMigrations) {
-      const appliedAt = migration.appliedAt.toLocaleString();
-      console.log(
-        `   ${chalk.green("✓")} ${migration.filename} ${chalk.gray(
-          `(applied ${appliedAt})`
-        )}`
-      );
-    }
-    console.log();
-  }
 
-  if (pendingMigrations.length > 0) {
-    console.log(
-      chalk.yellow(`⏳ Pending Migrations (${pendingMigrations.length}):`)
+    console.log(chalk.cyan("\n📊 Migration Status:\n"));
+
+    if (appliedMigrations.length > 0) {
+      console.log(
+        chalk.green(`✅ Applied Migrations (${appliedMigrations.length}):`)
+      );
+      for (const migration of appliedMigrations) {
+        const appliedAt = migration.appliedAt.toLocaleString();
+        console.log(
+          `   ${chalk.green("✓")} ${migration.filename} ${chalk.gray(
+            `(applied ${appliedAt})`
+          )}`
+        );
+      }
+      console.log();
+    }
+
+    if (pendingMigrations.length > 0) {
+      console.log(
+        chalk.yellow(`⏳ Pending Migrations (${pendingMigrations.length}):`)
+      );
+
+      for (const migration of pendingMigrations) {
+        const createdAt = formatMigrationTimestamp(migration.timestamp);
+
+        console.log(
+          `   ${chalk.yellow("○")} ${migration.filename} ${chalk.gray(
+            `(created ${createdAt})`
+          )}`
+        );
+      }
+      console.log();
+    }
+
+    if (appliedMigrations.length === 0 && pendingMigrations.length === 0) {
+      console.log(chalk.gray("No migrations found."));
+    }
+  } catch (error) {
+    const maskedError = maskSensitiveInfo(
+      error instanceof Error ? error.message : String(error)
     );
-    for (const migration of pendingMigrations) {
-      const createdAt = formatMigrationTimestamp(migration.timestamp);
-      console.log(
-        `   ${chalk.yellow("○")} ${migration.filename} ${chalk.gray(
-          `(created ${createdAt})`
-        )}`
-      );
-    }
-    console.log();
-  }
 
-  if (appliedMigrations.length === 0 && pendingMigrations.length === 0) {
-    console.log(chalk.gray("No migrations found."));
+    console.error(
+      chalk.red("❌ Failed to show migration status:"),
+      maskedError
+    );
+
+    throw error;
   }
 }

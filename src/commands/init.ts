@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import fs from "fs-extra";
 import detectProjectType from "../utilities/detect-project-type";
+import { safeResolve, secureWriteFile } from "../utilities/security-utils";
 
 const PROJECT_TYPE = detectProjectType();
 
@@ -66,12 +67,15 @@ const BOOTSTRAP_TEMPLATE =
 
 export default async function init(): Promise<void> {
   try {
-    if (fs.existsSync(BOOTSTRAP_FILE)) {
+    // Safely resolve the bootstrap file path
+    const safePath = safeResolve(process.cwd(), BOOTSTRAP_FILE);
+
+    if (await fs.pathExists(safePath)) {
       return console.log(chalk.yellow(`${BOOTSTRAP_FILE} already exists.`));
     }
 
-    // Create bootstrap file
-    fs.writeFileSync(BOOTSTRAP_FILE, BOOTSTRAP_TEMPLATE);
+    // Create bootstrap file with secure permissions
+    await secureWriteFile(safePath, BOOTSTRAP_TEMPLATE);
 
     console.log(chalk.cyan("\n✅ Bootstrap file created!"));
 
