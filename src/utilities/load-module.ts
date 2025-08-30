@@ -1,12 +1,22 @@
 import * as path from "path";
 import { isESModuleProject } from "./is-esm-module-project";
+import { maskSensitiveInfo, safeResolve } from "./security-utils";
 
 /**
  * Load a module with compatibility for both CommonJS and ES modules
  */
 export async function loadModule(filePath: string): Promise<any> {
-  const resolvedPath = path.resolve(filePath);
+  const resolvedPath = safeResolve(process.cwd(), filePath);
   const isESProject = isESModuleProject(process.cwd());
+
+  // Validate file exists and is readable
+  try {
+    await import("fs").then(fs =>
+      fs.promises.access(resolvedPath, fs.constants.R_OK)
+    );
+  } catch (error) {
+    throw new Error(`Cannot access file: ${path.basename(filePath)}`);
+  }
 
   // If it's an ES module project, we need to use dynamic import
   if (isESProject && filePath.endsWith(".js")) {
@@ -22,12 +32,14 @@ export async function loadModule(filePath: string): Promise<any> {
       const module = await importFn(fileUrl);
       return module.default || module;
     } catch (importError) {
+      const maskedError = maskSensitiveInfo(
+        importError instanceof Error ? importError.message : String(importError)
+      );
+
       throw new Error(
-        `Failed to import ES module ${filePath}: ${
-          importError instanceof Error
-            ? importError.message
-            : String(importError)
-        }\n` +
+        `Failed to import ES module ${path.basename(
+          filePath
+        )}: ${maskedError}\n` +
           `This is likely because your project has "type": "module" in package.json.\n` +
           `Solutions:\n` +
           `1. Rename your bootstrap file to mongeese.connection.cjs\n` +
@@ -52,9 +64,11 @@ export async function loadModule(filePath: string): Promise<any> {
         ? requireError.message
         : String(requireError);
 
+    const maskedError = maskSensitiveInfo(errorMessage);
+
     if (errorMessage.includes("require() of ES Module")) {
       throw new Error(
-        `Cannot require ES module ${filePath}.\n` +
+        `Cannot require ES module ${path.basename(filePath)}.\n` +
           `Your project has "type": "module" in package.json, which treats all .js files as ES modules.\n` +
           `Solutions:\n` +
           `1. Rename your bootstrap file to mongeese.connection.cjs\n` +
@@ -65,6 +79,8 @@ export async function loadModule(filePath: string): Promise<any> {
       );
     }
 
-    throw new Error(`Failed to load module ${filePath}: ${errorMessage}`);
+    throw new Error(
+      `Failed to load module ${path.basename(filePath)}: ${maskedError}`
+    );
   }
 }

@@ -1,12 +1,16 @@
 import chalk from "chalk";
 import fs from "fs-extra";
-import path from "path";
 import {
   DiffResult,
   GenerateMigrationOptions,
   MigrationCommand,
 } from "../types";
 import detectProjectType from "../utilities/detect-project-type";
+import {
+  safeResolve,
+  secureWriteFile,
+  validateIdentifier,
+} from "../utilities/security-utils";
 
 const PROJECT_TYPE = detectProjectType();
 
@@ -37,7 +41,10 @@ export function generateTimestamp(): string {
  * Sanitize migration name for filename
  */
 export function sanitizeMigrationName(name: string): string {
-  return name
+  // First validate the name
+  const validatedName = validateIdentifier(name, "migration");
+
+  return validatedName
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, "_")
     .replace(/_{2,}/g, "_")
@@ -237,9 +244,12 @@ export function generateMigrationContent(
  * Ensure migrations directory exists
  */
 export async function ensureMigrationsDirectory(): Promise<string> {
-  const migrationsDir = path.join(process.cwd(), "migrations");
+  const migrationsDir = safeResolve(process.cwd(), "migrations");
 
   await fs.ensureDir(migrationsDir);
+
+  // Set directory permissions to be more restrictive
+  await fs.chmod(migrationsDir, 0o700);
 
   return migrationsDir;
 }
@@ -255,11 +265,7 @@ export async function generateMigrationPreview(
   const hasChanges = diffResult.up.length > 0 || diffResult.down.length > 0;
 
   if (!hasChanges) {
-    return console.log(
-      chalk.yellow(
-        "No schema changes detected. Use --force to generate empty migration."
-      )
-    );
+    return console.log(chalk.yellow("No schema changes detected."));
   }
 
   // Generate migration name
@@ -275,7 +281,7 @@ export async function generateMigrationPreview(
   // Ensure migrations directory exists
   const migrationsDir = await ensureMigrationsDirectory();
 
-  const filepath = path.join(migrationsDir, filename);
+  const filepath = safeResolve(migrationsDir, filename);
 
   // Check if file already exists
   if (await fs.pathExists(filepath)) {
@@ -285,5 +291,6 @@ export async function generateMigrationPreview(
   // Generate migration content
   const content = generateMigrationContent(migrationName, diffResult);
 
-  await fs.writeFile(filepath, content, "utf8");
+  // Write file with secure permissions (0o600 = owner read/write only)
+  await secureWriteFile(filepath, content, { mode: 0o600 });
 }

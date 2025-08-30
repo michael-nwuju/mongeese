@@ -4,6 +4,7 @@ import { Db, MongoServerSelectionError } from "mongodb";
 import { DbWithClient } from "../types";
 import { isESModuleProject } from "./is-esm-module-project";
 import { loadModule } from "./load-module";
+import { maskSensitiveInfo, safeResolve } from "./security-utils";
 
 /**
  * Safely check if a module can be resolved
@@ -107,6 +108,8 @@ export async function getDatabase(): Promise<DbWithClient> {
         `Run 'mongeese-cli init' to generate one automatically.`
     );
   }
+  // Safely resolve bootstrap file path
+  const safeBootstrapPath = safeResolve(process.cwd(), bootstrapFile);
 
   // Handle TypeScript registration if needed
   if (needsTypeScript) {
@@ -123,7 +126,7 @@ export async function getDatabase(): Promise<DbWithClient> {
 
   try {
     // Load the bootstrap module using our compatibility function
-    const bootstrap = await loadModule(bootstrapFile);
+    const bootstrap = await loadModule(safeBootstrapPath);
 
     if (!bootstrap || typeof bootstrap !== "object") {
       throw new Error(
@@ -142,6 +145,8 @@ export async function getDatabase(): Promise<DbWithClient> {
         // Attempt to get the DB, catch errors thrown by new MongoClient(uri)
         db = await bootstrap.getDbWithClient();
       } catch (err: any) {
+        const maskedError = maskSensitiveInfo(err.message);
+
         if (
           err.message.includes("Invalid scheme") ||
           err.message.includes("startsWith")
@@ -149,10 +154,11 @@ export async function getDatabase(): Promise<DbWithClient> {
           throw new Error(
             `Invalid MongoDB URI. Ensure it starts with 'mongodb://' or 'mongodb+srv://'.\n` +
               `Check your MONGODB_URI environment variable or bootstrap configuration.\n` +
-              `Original error: ${err.message}`
+              `Original error: ${maskedError}`
           );
         }
-        throw err; // rethrow other unexpected errors
+
+        throw new Error(`Database connection error: ${maskedError}`);
       }
 
       if (!db) {
@@ -171,14 +177,18 @@ export async function getDatabase(): Promise<DbWithClient> {
         try {
           await db.client.db().admin().ping();
         } catch (connErr) {
+          const maskedError = maskSensitiveInfo(
+            connErr instanceof Error ? connErr.message : String(connErr)
+          );
+
           if (connErr instanceof MongoServerSelectionError) {
             throw new Error(
               `Failed to connect to MongoDB. The URI might be invalid or the server is unreachable.\n` +
                 `Check your MONGODB_URI environment variable or bootstrap configuration.\n` +
-                `Original error: ${connErr.message}`
+                `Original error: ${maskedError}`
             );
           } else {
-            throw connErr;
+            throw new Error(`Database connection test failed: ${maskedError}`);
           }
         }
       }
@@ -265,11 +275,12 @@ export async function getDatabase(): Promise<DbWithClient> {
 
     // Enhanced error reporting for unexpected errors
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const maskedError = maskSensitiveInfo(errorMessage);
     const nodeVersion = process.version;
 
     throw new Error(
       `Failed to load database connection from ${bootstrapFile}:\n` +
-        `Error: ${errorMessage}\n` +
+        `Error: ${maskedError}\n` +
         `Node.js version: ${nodeVersion}\n` +
         `Platform: ${process.platform}\n` +
         `Working directory: ${process.cwd()}\n` +
