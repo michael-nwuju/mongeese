@@ -82,9 +82,7 @@ function isNestJSProject(): boolean {
   }
 }
 
-/**
- * Enhanced model detection that tries multiple approaches
- */
+// Enhanced model detection that handles duplicates properly
 export function detectRegisteredModelsAdvanced(): {
   models: Model<any>[];
   detectionMethod: string;
@@ -98,9 +96,15 @@ export function detectRegisteredModelsAdvanced(): {
     totalConnections: 0,
     connectionStates: [] as any[],
     allModelNames: [] as string[],
+    duplicateModels: [] as string[], // Track duplicates
+    modelsByConnection: {} as Record<string, string[]>, // Track which models come from which connection
   };
 
-  let models: Model<any>[] = [];
+  // Use a Map to track models by both name AND connection
+  const modelMap = new Map<
+    string,
+    { model: Model<any>; connectionName: string; connectionIndex: number }
+  >();
   let detectionMethod = "none";
 
   try {
@@ -114,10 +118,21 @@ export function detectRegisteredModelsAdvanced(): {
       Object.keys(mongoose.models).length > 0
     ) {
       const defaultModels = Object.values(mongoose.models) as Model<any>[];
-      models.push(...defaultModels);
+
+      defaultModels.forEach(model => {
+        const key = `${model.modelName}:default`;
+        modelMap.set(key, {
+          model,
+          connectionName: "default",
+          connectionIndex: -1,
+        });
+      });
 
       diagnostics.defaultModelCount = defaultModels.length;
       diagnostics.defaultModelNames = defaultModels.map(m => m.modelName);
+      diagnostics.modelsByConnection["default"] = defaultModels.map(
+        m => m.modelName
+      );
 
       detectionMethod = "default-mongoose-models";
     }
@@ -127,12 +142,14 @@ export function detectRegisteredModelsAdvanced(): {
       diagnostics.totalConnections = mongoose.connections.length;
 
       mongoose.connections.forEach((connection, index) => {
+        const connName = connection.name || `connection-${index}`;
         const connInfo = {
           index,
-          name: connection.name || "default",
+          name: connName,
           readyState: connection.readyState,
           modelCount: 0,
           modelNames: [] as string[],
+          duplicateModelNames: [] as string[],
         };
 
         if (connection.models && Object.keys(connection.models).length > 0) {
@@ -142,16 +159,43 @@ export function detectRegisteredModelsAdvanced(): {
           connInfo.modelCount = connectionModels.length;
           connInfo.modelNames = connectionModels.map(m => m.modelName);
 
-          // Add models that aren't already in our list
           connectionModels.forEach(model => {
-            if (
-              !models.some(
-                existingModel => existingModel.modelName === model.modelName
-              )
-            ) {
-              models.push(model);
+            const key = `${model.modelName}:${connName}`;
+
+            // Check if we already have a model with this name from another connection
+            const existingWithSameName = Array.from(modelMap.values()).find(
+              entry => entry.model.modelName === model.modelName
+            );
+
+            if (existingWithSameName) {
+              // We have a duplicate model name across connections
+              if (!diagnostics.duplicateModels.includes(model.modelName)) {
+                diagnostics.duplicateModels.push(model.modelName);
+              }
+              connInfo.duplicateModelNames.push(model.modelName);
+
+              // For now, prefer the default connection or the first one found
+              if (existingWithSameName.connectionName !== "default") {
+                console.warn(
+                  `[Mongeese] Using model '${model.modelName}' from connection '${connName}' (overriding '${existingWithSameName.connectionName}')`
+                );
+                modelMap.set(key, {
+                  model,
+                  connectionName: connName,
+                  connectionIndex: index,
+                });
+              }
+            } else {
+              // No duplicate, safe to add
+              modelMap.set(key, {
+                model,
+                connectionName: connName,
+                connectionIndex: index,
+              });
             }
           });
+
+          diagnostics.modelsByConnection[connName] = connInfo.modelNames;
 
           if (detectionMethod === "none") {
             detectionMethod = `connection-${index}`;
@@ -164,46 +208,8 @@ export function detectRegisteredModelsAdvanced(): {
       });
     }
 
-    // Method 3: Try mongoose.connection.models (alternative access)
-    if (
-      models.length === 0 &&
-      mongoose.connection &&
-      mongoose.connection.models
-    ) {
-      try {
-        const connectionModels = Object.values(
-          mongoose.connection.models
-        ) as Model<any>[];
-        if (connectionModels.length > 0) {
-          models.push(...connectionModels);
-          detectionMethod = "mongoose-connection-models";
-        }
-      } catch (error) {
-        console.warn(
-          "[Mongeese] Could not access mongoose.connection.models:",
-          error
-        );
-      }
-    }
-
-    // Method 4: Try to access models through mongoose.modelNames() (if available)
-    if (models.length === 0 && typeof mongoose.modelNames === "function") {
-      try {
-        const modelNames = mongoose.modelNames();
-        if (modelNames.length > 0) {
-          const namedModels = modelNames
-            .map(name => mongoose.model(name))
-            .filter(Boolean);
-          models.push(...namedModels);
-          detectionMethod = "mongoose-modelNames";
-        }
-      } catch (error) {
-        console.warn(
-          "[Mongeese] Could not access models via mongoose.modelNames():",
-          error
-        );
-      }
-    }
+    // Extract final models list
+    const models = Array.from(modelMap.values()).map(entry => entry.model);
 
     // Update diagnostics
     diagnostics.allModelNames = [...new Set(models.map(m => m.modelName))];
